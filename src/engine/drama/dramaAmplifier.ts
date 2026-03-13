@@ -33,8 +33,8 @@ export function amplifyDrama(
     let boostedEmotions = agent.emotions
     if (agent.traits.dramaTendency > 60) {
       boostedEmotions = applyEmotionalImpact(agent.emotions, {
-        anger: 5,
-        excitement: 5,
+        anger: 2,
+        excitement: 3,
       })
     }
 

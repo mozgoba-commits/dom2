@@ -117,7 +117,7 @@ export function getDramaAlerts(
     if (agent.emotions.sadness > 85) {
       alerts.push(`${agent.bio.name} на грани нервного срыва!`)
     }
-    if (agent.emotions.anger > 85) {
+    if (agent.emotions.anger > 90) {
       alerts.push(`${agent.bio.name} в ярости!`)
     }
   }

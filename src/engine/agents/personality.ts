@@ -23,7 +23,7 @@ export function decayEmotions(emotions: EmotionalState): EmotionalState {
   const newEmotions = {
     ...emotions,
     happiness: emotions.happiness > 50 ? decay(emotions.happiness, 1) : grow(emotions.happiness, 0.5),
-    anger: decay(emotions.anger, 2),
+    anger: decay(emotions.anger, 4),
     sadness: decay(emotions.sadness, 1),
     fear: decay(emotions.fear, 1.5),
     excitement: decay(emotions.excitement, 2),

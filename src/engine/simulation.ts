@@ -31,6 +31,7 @@ export class Simulation {
   private eventHandlers: SimulationEventHandler[] = []
   private tickInterval: ReturnType<typeof setInterval> | null = null
   private useLLM: boolean
+  private recentAlerts: Map<string, number> = new Map() // alert text -> tick when last sent
 
   constructor(useLLM = true) {
     this.useLLM = useLLM
@@ -128,11 +129,26 @@ export class Simulation {
       this.handleEventStart(event)
     }
 
-    // 6. Handle sleeping
+    // 6. Handle sleeping — assign each agent to a specific bed position
     if (isNightTime(state.clock)) {
+      // Bed positions in OLD server coordinate space (bedroom: x:0, y:90, w:100, h:100)
+      // Client will remap these to canvas coordinates
+      const bedPositions = [
+        { x: 15, y: 110 },  // bed 1 (top-left)
+        { x: 15, y: 165 },  // bed 2 (bottom-left)
+        { x: 75, y: 110 },  // bed 3 (top-right)
+        { x: 75, y: 165 },  // bed 4 (bottom-right)
+        { x: 35, y: 110 },  // overflow positions
+        { x: 35, y: 165 },
+        { x: 55, y: 110 },
+        { x: 55, y: 165 },
+      ]
+      let bedIdx = 0
       state.agents = state.agents.map(agent => {
         if (agent.isEvicted) return agent
-        return { ...agent, status: 'sleeping', location: 'bedroom' }
+        const bed = bedPositions[bedIdx % bedPositions.length]
+        bedIdx++
+        return { ...agent, status: 'sleeping', location: 'bedroom', position: bed }
       })
     } else {
       // Wake up
@@ -159,6 +175,24 @@ export class Simulation {
     // 8. Execute decisions
     for (const decision of decisions) {
       await this.executeDecision(decision)
+    }
+
+    // 8b. Idle wandering — free agents occasionally shift within their room
+    if (tick % 3 === 0) { // every 3 ticks (~30 game minutes)
+      for (const agent of state.agents) {
+        if (agent.isEvicted || agent.status !== 'free') continue
+        if (Math.random() > 0.4) continue // 40% chance per eligible tick
+        const oldPos = { ...agent.position }
+        agent.position = getLocationPosition(agent.location, Math.floor(Math.random() * 8))
+        // Only emit if position actually changed significantly
+        if (Math.abs(oldPos.x - agent.position.x) > 5 || Math.abs(oldPos.y - agent.position.y) > 5) {
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: agent.location, position: agent.position },
+            tick,
+          })
+        }
+      }
     }
 
     // 9. Progress active conversations
@@ -191,8 +225,32 @@ export class Simulation {
         const agent = state.agents.find(a => a.id === id)
         return agent && !agent.isEvicted && agent.status !== 'sleeping'
       })
-      if (!participantsAvailable) {
+      // Also end conversations where participants are no longer in the same location
+      const sameLocation = conv.participants.length >= 2 && (() => {
+        const locs = conv.participants.map(id => state.agents.find(a => a.id === id)?.location)
+        return locs.every(l => l && l === locs[0])
+      })()
+      if (!participantsAvailable || !sameLocation) {
         this.conversationEngine.endConversation(conv.id, tick)
+        // Free all participants
+        for (const pid of conv.participants) {
+          const agent = state.agents.find(a => a.id === pid)
+          if (agent && agent.status === 'in_conversation') {
+            agent.status = 'free'
+          }
+        }
+      }
+    }
+
+    // Also free agents whose conversation already ended (reached max turns, boring, etc.)
+    for (const conv of activeConvs) {
+      if (conv.endedAtTick !== null) {
+        for (const pid of conv.participants) {
+          const agent = state.agents.find(a => a.id === pid)
+          if (agent && agent.status === 'in_conversation') {
+            agent.status = 'free'
+          }
+        }
       }
     }
 
@@ -201,10 +259,20 @@ export class Simulation {
     state.drama = detectDrama(state.agents, this.relationshipGraph, allConvs, state.drama)
     state.agents = amplifyDrama(state.agents, state.drama, this.relationshipGraph)
 
-    // Drama alerts
+    // Drama alerts (deduplicated — same alert not more than once per 30 ticks)
     const alerts = getDramaAlerts(state.agents, this.relationshipGraph)
     for (const alert of alerts) {
-      this.emit({ type: 'drama_alert', data: { message: alert }, tick })
+      const lastSent = this.recentAlerts.get(alert) ?? 0
+      if (tick - lastSent >= 30) {
+        this.emit({ type: 'drama_alert', data: { message: alert }, tick })
+        this.recentAlerts.set(alert, tick)
+      }
+    }
+    // Clean old entries
+    if (tick % 60 === 0) {
+      for (const [key, t] of this.recentAlerts) {
+        if (tick - t > 60) this.recentAlerts.delete(key)
+      }
     }
 
     // Drama-triggered events
@@ -290,6 +358,11 @@ export class Simulation {
         if (agent.location !== target.location) {
           agent.location = target.location
           agent.position = getLocationPosition(target.location, this.state.agents.indexOf(agent))
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: agent.location, position: agent.position },
+            tick,
+          })
         }
 
         // Apply relationship changes
@@ -457,11 +530,25 @@ export class Simulation {
       case 'breakfast':
       case 'lunch':
       case 'dinner':
-        // Move all agents to kitchen
+        // End any active conversations first, then move agents to kitchen
+        for (const conv of this.conversationEngine.getActiveConversations()) {
+          this.conversationEngine.endConversation(conv.id, tick)
+          // Free conversation participants
+          for (const pid of conv.participants) {
+            const p = this.state.agents.find(a => a.id === pid)
+            if (p) p.status = 'free'
+          }
+        }
         for (const agent of this.state.agents) {
           if (!agent.isEvicted && agent.status !== 'sleeping') {
+            agent.status = 'free'
             agent.location = 'kitchen'
             agent.position = getLocationPosition('kitchen', this.state.agents.indexOf(agent))
+            this.emit({
+              type: 'agent_move',
+              data: { agentId: agent.id, name: agent.bio.name, location: 'kitchen', position: agent.position },
+              tick,
+            })
           }
         }
         this.emit({
@@ -521,9 +608,9 @@ function getEmotionalImpact(
   if (role === 'actor') {
     switch (action) {
       case 'flirt': return { excitement: 10, love: 5, happiness: 5 }
-      case 'argue': return { anger: 15, excitement: 10 }
+      case 'argue': return { anger: 8, excitement: 5 }
       case 'comfort': return { happiness: 5 }
-      case 'confront': return { anger: 10, excitement: 5 }
+      case 'confront': return { anger: 6, excitement: 3 }
       case 'manipulate': return { excitement: 5 }
       case 'apologize': return { sadness: 5 }
       default: return { happiness: 3 }
@@ -531,9 +618,9 @@ function getEmotionalImpact(
   } else {
     switch (action) {
       case 'flirt': return { excitement: 8, love: 3, happiness: 5 }
-      case 'argue': return { anger: 20, sadness: 5 }
+      case 'argue': return { anger: 10, sadness: 3 }
       case 'comfort': return { happiness: 15, sadness: -10 }
-      case 'confront': return { anger: 15, sadness: 10 }
+      case 'confront': return { anger: 8, sadness: 5 }
       case 'manipulate': return { happiness: 3 } // doesn't know they're being manipulated
       case 'apologize': return { happiness: 10, anger: -10 }
       default: return { happiness: 2 }

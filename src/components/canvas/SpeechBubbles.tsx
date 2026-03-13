@@ -41,7 +41,8 @@ export default function SpeechBubbles() {
       agentName: latest.speakerName,
       content: latest.content.length > 60 ? latest.content.slice(0, 57) + '...' : latest.content,
       accentColor: getAccentColor(latest.speakerName),
-      position: { x: pos.x * SCALE, y: pos.y * SCALE },
+      // Position at head level: cy is feet, head is ~24px above in native coords
+      position: { x: pos.x * SCALE, y: (pos.y - 28) * SCALE },
       expiresAt: Date.now() + BUBBLE_TTL,
       fading: false,
     }
@@ -97,7 +98,7 @@ export default function SpeechBubbles() {
             left: bubble.position.x,
             top: bubble.position.y + (bubble.yOffset || 0),
             transform: 'translate(-50%, -100%)',
-            marginTop: '-30px',
+            marginTop: '-10px',
           }}
         >
           <div

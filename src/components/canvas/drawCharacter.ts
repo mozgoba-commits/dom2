@@ -265,18 +265,18 @@ export function drawCharacter(
     ctx.fill()
   }
 
-  // ── Name label ──
+  // Restore mirror transform BEFORE drawing name (so text isn't flipped)
+  if (mirror) {
+    ctx.restore()
+  }
+
+  // ── Name label ── (drawn outside mirror transform)
   ctx.font = '4px monospace'
   ctx.textAlign = 'center'
   ctx.fillStyle = '#000000'
   ctx.fillText(name, cx + 0.5, cy + 7.5) // shadow
   ctx.fillStyle = '#ffffff'
   ctx.fillText(name, cx, cy + 7)
-
-  // Restore mirror transform
-  if (mirror) {
-    ctx.restore()
-  }
 }
 
 // ─── Hair styles ─────────────────────────────────────────────

@@ -249,7 +249,7 @@ function ConvoBlock({
 }: {
   msgs: Array<{
     id: string; speakerName: string; speakerId: string
-    content: string; emotion: string; action?: string; location: string
+    content: string; emotion: string; action?: string; location: string; tick: number
   }>
   selectedAgentId: string | null
   onSelect: (id: string) => void
@@ -262,8 +262,9 @@ function ConvoBlock({
     <div className={`rounded border-l-2 px-2 py-1.5 ${
       isRelevant ? 'border-l-white bg-gray-800/70' : 'border-l-gray-700 bg-gray-800/30'
     }`}>
-      {/* Header: location + participants — single compact line */}
+      {/* Header: time + location + participants */}
       <div className="flex items-center gap-1 mb-1 text-[10px] text-gray-500">
+        <span className="text-gray-600 font-mono">{tickToTime(msgs[0].tick)}</span>
         <span className={`inline-block w-1.5 h-1.5 rounded-full ${LOC_DOT_COLORS[location] ?? 'bg-gray-500'}`} />
         <span>{LOC_LABELS[location]}</span>
         <span className="text-gray-700">·</span>
@@ -317,4 +318,11 @@ function cleanContent(content: string, action?: string): string {
     content = content.replace(new RegExp(`^\\*${escaped}\\*\\s*`), '')
   }
   return content.replace(/^\*[^*]+\*\s*/, '')
+}
+
+function tickToTime(tick: number): string {
+  const totalMinutes = 8 * 60 + tick * 10 // starts at 8:00
+  const h = Math.floor(totalMinutes / 60) % 24
+  const m = totalMinutes % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }

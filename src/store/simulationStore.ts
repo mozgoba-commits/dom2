@@ -319,11 +319,12 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
             }
           )
 
-          // Update location immediately (so other systems know where agent is going)
+          // Update location immediately (so other systems know destination room)
+          // but DON'T update position — let walkingStore handle interpolation
           set(state => ({
             agents: state.agents.map(a =>
               a.id === data.agentId
-                ? { ...a, location: data.location, position: data.position }
+                ? { ...a, location: data.location }
                 : a
             ),
           }))
