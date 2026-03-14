@@ -15,10 +15,11 @@ function tryGetLLM(): import('../../../../engine/types').LLMProvider | null {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { targetAgentId, message, broadcast } = body as {
+    const { targetAgentId, message, broadcast, type: msgType } = body as {
       targetAgentId?: string
       message: string
       broadcast?: boolean
+      type?: 'message' | 'task' | 'twist'
     }
 
     if (!message?.trim()) {
@@ -36,6 +37,32 @@ export async function POST(req: NextRequest) {
 
     if (targets.length === 0) {
       return NextResponse.json({ error: 'No valid targets' }, { status: 400 })
+    }
+
+    // Handle twist type — modify simulation state
+    if (msgType === 'twist') {
+      if (message.includes('вернуть всех') || message.includes('вернём всех')) {
+        sim.applyTwist('return_all', {})
+      } else if (message.includes('иммунитет') && targetAgentId) {
+        sim.applyTwist('immunity', { agentId: targetAgentId })
+      } else if (message.includes('секрет')) {
+        sim.applyTwist('secret_reveal', { message })
+      } else {
+        // Generic twist — broadcast as drama alert and let agents respond
+        sim.applyTwist('secret_reveal', { message })
+      }
+    }
+
+    // Handle task type — override agent's current plan
+    if (msgType === 'task' && targetAgentId) {
+      const targetAgent = agents.find(a => a.id === targetAgentId)
+      if (targetAgent) {
+        targetAgent.currentPlan = {
+          agentId: targetAgentId,
+          day: clock.day,
+          goals: [message],
+        }
+      }
     }
 
     const llm = tryGetLLM()
@@ -89,7 +116,6 @@ ${agent.bio.physicalDescription}
       })
 
       // Emit SSE events so they appear in the chat
-      // @ts-expect-error accessing private emit method for event broadcast
       sim.emit({
         type: 'conversation',
         data: {
@@ -106,7 +132,6 @@ ${agent.bio.physicalDescription}
 
     // Drama alert
     const targetName = targets.length === 1 ? targets[0].bio.name : 'всем'
-    // @ts-expect-error accessing private emit method for event broadcast
     sim.emit({
       type: 'drama_alert',
       data: { message: `[ВЕДУЩИЙ] обратился к ${targetName}!` },

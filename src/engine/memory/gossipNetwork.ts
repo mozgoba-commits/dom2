@@ -111,3 +111,16 @@ export function getBestGossipTarget(
 export function getGossipAbout(agentId: string): GossipItem[] {
   return [...gossipItems.values()].filter(g => g.aboutAgentIds.includes(agentId))
 }
+
+/** Export all gossip items for persistence */
+export function exportGossipItems(): GossipItem[] {
+  return [...gossipItems.values()]
+}
+
+/** Import gossip items from persistence */
+export function importGossipItems(items: GossipItem[]) {
+  gossipItems.clear()
+  for (const item of items) {
+    gossipItems.set(item.id, item)
+  }
+}

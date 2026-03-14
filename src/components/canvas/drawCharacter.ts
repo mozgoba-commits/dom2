@@ -29,6 +29,31 @@ export function drawCharacter(
     bodyBuild, accessory, gender,
   } = config
 
+  const aState = animState ?? 'idle'
+
+  // Sleeping: rotate 90° CCW so character lies horizontally on bed
+  if (aState === 'sleeping') {
+    const centerY = cy - 12 // approximate vertical center of character
+    ctx.save()
+    ctx.translate(cx, centerY)
+    ctx.rotate(-Math.PI / 2)
+    ctx.translate(-cx, -centerY)
+
+    // Draw simplified sleeping character (no walking, no idle look)
+    drawSleepingBody(ctx, cx, cy, config)
+
+    ctx.restore()
+
+    // Name label (drawn outside rotation)
+    ctx.font = '4px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#000000'
+    ctx.fillText(name, cx + 0.5, cy + 17.5)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(name, cx, cy + 17)
+    return
+  }
+
   // Mirror for facing left
   const mirror = facing === 'left'
   if (mirror) {
@@ -38,17 +63,12 @@ export function drawCharacter(
   }
 
   const isWalking = walkFrame !== undefined
-  const aState = animState ?? 'idle'
   const aFrame = animFrame ?? 0
 
   // Idle breathing: Y-bob applied to body/head, NOT feet
   let breathBob = 0
   if (idlePhase !== undefined) {
-    if (aState === 'sleeping') {
-      breathBob = Math.sin(idlePhase * 0.48) * 1.0 // slower, deeper for sleeping
-    } else {
-      breathBob = Math.sin(idlePhase) * 0.5
-    }
+    breathBob = Math.sin(idlePhase) * 0.5
   }
 
   // Action-specific body offsets
@@ -77,8 +97,6 @@ export function drawCharacter(
     bodyJump = -3
   } else if (aState === 'laughing') {
     bodyLean = aFrame % 2 === 0 ? -1 : 1
-  } else if (aState === 'sleeping') {
-    breathBob += 1 // head droops down
   }
 
   // Dimensions
@@ -166,7 +184,6 @@ export function drawCharacter(
   // ── Eyes (mood-based, with animation overrides) ──
   const eyeMood = aState === 'arguing' ? 'angry' as Mood
     : aState === 'flirting' ? 'flirty' as Mood
-    : aState === 'sleeping' ? 'bored' as Mood
     : aState === 'crying' ? 'devastated' as Mood
     : aState === 'celebrating' ? 'happy' as Mood
     : aState === 'shocked' ? 'anxious' as Mood
@@ -194,8 +211,6 @@ export function drawCharacter(
     // O-shape
     px(ctx, mouthCx - 1, mouthY, 2, 2, '#993366')
     px(ctx, mouthCx, mouthY + 1, 1, 1, skinColor) // hollow center
-  } else if (aState === 'sleeping') {
-    px(ctx, mouthCx - 1, mouthY, 2, 1, '#666688') // closed line
   } else if (aState === 'celebrating') {
     px(ctx, mouthCx - 2, mouthY, 4, 1, '#cc5555') // big smile
   } else if (aState === 'crying') {
@@ -480,12 +495,7 @@ function drawActionIndicator(
       px(ctx, cx, y - 1, 1, 3, '#ccaa55')
       px(ctx, cx - 1, y, 3, 1, '#ccaa55')
       break
-    case 'sleeping':
-      // Crescent moon
-      px(ctx, cx - 1, y - 1, 3, 1, '#aabbdd')
-      px(ctx, cx - 2, y, 1, 2, '#aabbdd')
-      px(ctx, cx - 1, y + 2, 3, 1, '#aabbdd')
-      break
+    // sleeping is handled by early return + drawSleepingBody
     case 'thinking':
       // Three dots
       px(ctx, cx - 2, y + 1, 1, 1, '#aaaaaa')
@@ -509,6 +519,89 @@ function drawActionIndicator(
       ctx.fillText('x)', cx - 2, y + 2)
       break
   }
+}
+
+// ─── Sleeping body (simplified, drawn before rotation) ──────
+
+function drawSleepingBody(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  config: CharacterAppearance,
+) {
+  const { skinColor, hairColor, hairStyle, shirtColor, pantsColor, bodyBuild, gender } = config
+
+  const headW = 10
+  const headH = 8
+  const bodyW = bodyBuild === 'muscular' ? 10 : bodyBuild === 'slim' ? 6 : 8
+  const bodyH = 6
+  const legH = 4
+
+  const legsTopY = cy - legH
+  const bodyTopY = legsTopY - bodyH
+  const neckY = bodyTopY - 1
+  const headTopY = neckY - headH
+  const headL = Math.round(cx - headW / 2)
+  const bodyL = Math.round(cx - bodyW / 2)
+
+  // Shadow (under bed, subtle)
+  ctx.fillStyle = 'rgba(0,0,0,0.1)'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy + 1, 7, 2, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Legs (straight, no animation)
+  if (gender === 'female') {
+    for (let row = 0; row < legH; row++) {
+      const w = bodyW + Math.floor(row * 4 / legH)
+      const x = Math.round(cx - w / 2)
+      px(ctx, x - 1, legsTopY + row, w + 2, 1, OUTLINE)
+      px(ctx, x, legsTopY + row, w, 1, pantsColor)
+    }
+  } else {
+    const gap = bodyBuild === 'slim' ? 1 : 2
+    const legW = 2
+    const leftX = Math.round(cx - gap / 2 - legW)
+    const rightX = Math.round(cx + gap / 2)
+    px(ctx, leftX - 1, legsTopY - 1, legW + 2, legH + 2, OUTLINE)
+    px(ctx, rightX - 1, legsTopY - 1, legW + 2, legH + 2, OUTLINE)
+    px(ctx, leftX, legsTopY, legW, legH, pantsColor)
+    px(ctx, rightX, legsTopY, legW, legH, pantsColor)
+  }
+
+  // Body
+  px(ctx, bodyL - 1, bodyTopY - 1, bodyW + 2, bodyH + 2, OUTLINE)
+  px(ctx, bodyL, bodyTopY, bodyW, bodyH, shirtColor)
+  // Arms tucked
+  px(ctx, bodyL - 2, bodyTopY + 1, 2, 3, skinColor)
+  px(ctx, bodyL + bodyW, bodyTopY + 1, 2, 3, skinColor)
+
+  // Neck
+  px(ctx, cx - 1, neckY, 2, 1, skinColor)
+
+  // Head
+  px(ctx, headL - 1, headTopY - 1, headW + 2, headH + 2, OUTLINE)
+  px(ctx, headL, headTopY, headW, headH, skinColor)
+
+  // Hair
+  drawHair(ctx, cx, headTopY, headW, headH, headL, hairColor, hairStyle)
+
+  // Closed eyes (sleeping)
+  const eyeY = headTopY + Math.floor(headH * 0.38)
+  const lx = cx - 3
+  const rx = cx + 2
+  px(ctx, lx, eyeY + 1, 2, 1, '#555566')
+  px(ctx, rx, eyeY + 1, 2, 1, '#555566')
+
+  // Closed mouth
+  const mouthY = headTopY + Math.floor(headH * 0.75)
+  px(ctx, cx - 1, mouthY, 2, 1, '#666688')
+
+  // Zzz above head
+  ctx.fillStyle = '#aabbdd'
+  ctx.font = '4px monospace'
+  ctx.fillText('z', cx - 1, headTopY - 3)
+  ctx.font = '3px monospace'
+  ctx.fillText('z', cx + 3, headTopY - 6)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────

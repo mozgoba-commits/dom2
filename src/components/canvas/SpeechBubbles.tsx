@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useSimulationStore } from '../../store/simulationStore'
+import { useWalkingStore } from '../../store/walkingStore'
 import { getAccentColor } from './spriteConfig'
 import { SCALE } from './HouseScene'
 import { remapPosition } from '../../engine/coordinates'
@@ -16,8 +17,8 @@ interface VisibleBubble {
   fading: boolean
 }
 
-const MAX_BUBBLES = 2
-const BUBBLE_TTL = 4000 // ms
+const MAX_BUBBLES = 3
+const BUBBLE_TTL = 4500 // ms
 
 export default function SpeechBubbles() {
   const agents = useSimulationStore(s => s.agents)
@@ -35,7 +36,9 @@ export default function SpeechBubbles() {
     const agent = agents.find(a => a.id === latest.speakerId)
     if (!agent) return
 
-    const pos = remapPosition(agent.location, agent.position)
+    // Use walking store position if agent is still walking (prevents bubble ahead of agent)
+    const walkPos = useWalkingStore.getState().getPosition(agent.id)
+    const pos = walkPos ?? remapPosition(agent.location, agent.position)
 
     const newBubble: VisibleBubble = {
       messageId: latest.id,
@@ -49,7 +52,9 @@ export default function SpeechBubbles() {
     }
 
     setBubbles(prev => {
-      let next = [...prev, newBubble]
+      // Replace any existing bubble from the same agent (1 bubble per agent max)
+      let next = prev.filter(b => b.agentName !== newBubble.agentName)
+      next.push(newBubble)
       // Remove excess (keep newest MAX_BUBBLES)
       while (next.length > MAX_BUBBLES) {
         next.shift()
@@ -75,16 +80,18 @@ export default function SpeechBubbles() {
     return () => clearInterval(interval)
   }, [])
 
-  // Offset overlapping bubbles
+  // Offset overlapping bubbles — stack vertically with enough spacing
+  const offsets: number[] = []
   const adjustedBubbles = bubbles.map((bubble, i) => {
     let yOffset = 0
     for (let j = 0; j < i; j++) {
       const other = bubbles[j]
-      if (Math.abs(bubble.position.x - other.position.x) < 150 &&
-          Math.abs(bubble.position.y - other.position.y) < 50) {
-        yOffset -= 45
+      if (Math.abs(bubble.position.x - other.position.x) < 200 &&
+          Math.abs((bubble.position.y + yOffset) - (other.position.y + offsets[j])) < 70) {
+        yOffset -= 65
       }
     }
+    offsets.push(yOffset)
     return { ...bubble, yOffset }
   })
 

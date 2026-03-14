@@ -317,6 +317,8 @@ function runMock() {
 
 // ─── Hook ────────────────────────────────────────────────────
 
+export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'error'
+
 export function useSimulationSSE() {
   const handleSSEEvent = useSimulationStore(s => s.handleSSEEvent)
   const setConnected = useSimulationStore(s => s.setConnected)
@@ -327,12 +329,17 @@ export function useSimulationSSE() {
       return runMock()
     }
 
+    let backoffMs = 1000
+    const MAX_BACKOFF = 30000
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
     const connect = () => {
       const es = new EventSource('/api/simulation/stream')
       eventSourceRef.current = es
 
       es.onopen = () => {
         setConnected(true)
+        backoffMs = 1000 // Reset backoff on successful connection
       }
 
       es.onmessage = (e) => {
@@ -347,13 +354,19 @@ export function useSimulationSSE() {
       es.onerror = () => {
         setConnected(false)
         es.close()
-        setTimeout(connect, 3000)
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+        console.log(`[SSE] Reconnecting in ${backoffMs / 1000}s...`)
+        reconnectTimer = setTimeout(() => {
+          connect()
+        }, backoffMs)
+        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF)
       }
     }
 
     connect()
 
     return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       eventSourceRef.current?.close()
     }
   }, [handleSSEEvent, setConnected])

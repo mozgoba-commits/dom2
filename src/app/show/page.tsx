@@ -18,6 +18,9 @@ import EvictionScreen from '../../components/ui/EvictionScreen'
 import ConfessionalView from '../../components/ui/ConfessionalView'
 import Timeline from '../../components/ui/Timeline'
 import MobileNav from '../../components/ui/MobileNav'
+import OnboardingOverlay from '../../components/ui/OnboardingOverlay'
+import CatchUpOverlay from '../../components/ui/CatchUpOverlay'
+import FinaleScreen from '../../components/ui/FinaleScreen'
 import { useViewStore } from '../../store/viewStore'
 import { useSimulationStore } from '../../store/simulationStore'
 
@@ -79,6 +82,7 @@ export default function ShowPage() {
       <TokShowOverlay />
       <EvictionScreen />
       <ConfessionalView />
+      <FinaleScreen />
 
       {/* Modals */}
       {selectedAgentId && <AgentProfileCard />}
@@ -86,6 +90,10 @@ export default function ShowPage() {
       {showTimeline && <Timeline />}
       <VotingModal />
       <EventNotification />
+
+      {/* Onboarding + catch-up */}
+      <OnboardingOverlay />
+      <CatchUpOverlay />
     </div>
   )
 }

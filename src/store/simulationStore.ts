@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { DramaScore, GameClock, Mood, LocationId, SSEEvent } from '../engine/types'
+import type { DramaScore, GameClock, Mood, LocationId, SSEEvent, EpisodeInfo } from '../engine/types'
 import { findPath } from '../engine/pathfinding'
 import { remapPosition } from '../engine/coordinates'
 import { useWalkingStore } from './walkingStore'
@@ -60,6 +60,28 @@ interface ConfessionalData {
   emotion?: string
 }
 
+interface FinaleData {
+  winnerId: string
+  winnerName: string
+  episode?: EpisodeInfo
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface CatchUpData {
+  clock?: GameClock
+  activeAgentCount?: number
+  evictions?: Array<{ name: string; day: number | null }>
+  episode?: EpisodeInfo
+  drama?: DramaScore
+  relationshipHighlights?: {
+    friends: Array<{ a: string; b: string; score: number }>
+    rivals: Array<{ a: string; b: string; score: number }>
+    romances: Array<{ a: string; b: string; score: number }>
+  }
+  speed?: number
+  isPaused?: boolean
+}
+
 interface SimulationStore {
   // State from server
   agents: AgentSummary[]
@@ -70,10 +92,17 @@ interface SimulationStore {
   dramaAlerts: DramaAlert[]
   isConnected: boolean
 
+  // Episode & speed
+  episode: EpisodeInfo | null
+  simulationSpeed: number
+  isPaused: boolean
+
   // Event overlays
   activeTokShow: TokShowData | null
   activeEviction: EvictionData | null
   activeConfessional: ConfessionalData | null
+  finaleData: FinaleData | null
+  catchUpData: CatchUpData | null
 
   // UI state
   selectedAgentId: string | null
@@ -84,6 +113,7 @@ interface SimulationStore {
   setConnected: (connected: boolean) => void
   clearEviction: () => void
   clearConfessional: () => void
+  dismissCatchUp: () => void
 }
 
 function computeFacing(aPos: { x: number; y: number }, bPos: { x: number; y: number }): 'left' | 'right' {
@@ -102,9 +132,14 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   chatMessages: [],
   dramaAlerts: [],
   isConnected: false,
+  episode: null,
+  simulationSpeed: 1,
+  isPaused: false,
   activeTokShow: null,
   activeEviction: null,
   activeConfessional: null,
+  finaleData: null,
+  catchUpData: null,
   selectedAgentId: null,
 
   handleSSEEvent: (event: SSEEvent) => {
@@ -115,6 +150,9 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           agents: AgentSummary[]
           drama: DramaScore
           activeEvents: ActiveEvent[]
+          episode?: EpisodeInfo
+          speed?: number
+          isPaused?: boolean
         }
         const prevAgents = get().agents
         set({
@@ -122,6 +160,9 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           agents: data.agents,
           drama: data.drama,
           activeEvents: data.activeEvents,
+          ...(data.episode ? { episode: data.episode } : {}),
+          ...(data.speed !== undefined ? { simulationSpeed: data.speed } : {}),
+          ...(data.isPaused !== undefined ? { isPaused: data.isPaused } : {}),
         })
 
         // Initialize ALL agents in animation store + set states from status
@@ -139,7 +180,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           } else if (!existing) {
             // First time seeing this agent — initialize to idle so breathing starts
             animStore.setAnimationState(agent.id, 'idle')
-          } else if (existing.state !== 'idle' && existing.state !== 'walking' && agent.status === 'idle') {
+          } else if (existing.state !== 'idle' && existing.state !== 'walking' && agent.status === 'free') {
             // Agent finished conversation — return to idle, clear facing
             animStore.setAnimationState(agent.id, 'idle')
             animStore.setFacingOverride(agent.id, null)
@@ -382,6 +423,32 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
         }))
         break
       }
+
+      case 'catch_up': {
+        const data = event.data as CatchUpData
+        set({ catchUpData: data })
+        if (data.speed !== undefined) set({ simulationSpeed: data.speed })
+        if (data.isPaused !== undefined) set({ isPaused: data.isPaused })
+        if (data.episode) set({ episode: data.episode })
+        break
+      }
+
+      case 'episode_change': {
+        const data = event.data as { episode: EpisodeInfo }
+        set({ episode: data.episode })
+        break
+      }
+
+      case 'finale': {
+        const data = event.data as unknown as FinaleData
+        set({ finaleData: data })
+        break
+      }
+
+      case 'vote_update': {
+        // Could update voting UI with live totals if needed
+        break
+      }
     }
   },
 
@@ -389,6 +456,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   setConnected: (connected) => set({ isConnected: connected }),
   clearEviction: () => set({ activeEviction: null }),
   clearConfessional: () => set({ activeConfessional: null }),
+  dismissCatchUp: () => set({ catchUpData: null }),
 }))
 
 function eventTypeToMessage(type: string): string {

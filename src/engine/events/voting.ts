@@ -158,4 +158,14 @@ export class VotingEngine {
   getAllSessions(): VotingSession[] {
     return [...this.sessions]
   }
+
+  /** Serialize for persistence */
+  toJSON(): VotingSession[] {
+    return [...this.sessions]
+  }
+
+  /** Load from save data */
+  loadData(sessions: VotingSession[]) {
+    this.sessions = sessions
+  }
 }

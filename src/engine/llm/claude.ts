@@ -1,9 +1,12 @@
 import { LLMMessage, LLMModel, LLMProvider, LLMResponse } from '../types'
+import { RateLimitError, TimeoutError } from './errors'
 
 const MODEL_MAP: Record<LLMModel, string> = {
   cheap: 'claude-haiku-4-5-20251001',
   strong: 'claude-sonnet-4-6',
 }
+
+const TIMEOUT_MS = 10_000
 
 export class ClaudeProvider implements LLMProvider {
   name = 'claude'
@@ -28,30 +31,49 @@ export class ClaudeProvider implements LLMProvider {
       body.system = systemMsg.content
     }
 
-    const res = await fetch(`${this.baseUrl}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Claude API error ${res.status}: ${text}`)
-    }
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
 
-    const data = await res.json()
-    const content = data.content?.[0]?.text ?? ''
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('retry-after') ?? '5') * 1000
+        throw new RateLimitError(retryAfter)
+      }
 
-    return {
-      content,
-      usage: {
-        inputTokens: data.usage?.input_tokens ?? 0,
-        outputTokens: data.usage?.output_tokens ?? 0,
-      },
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Claude API error ${res.status}: ${text}`)
+      }
+
+      const data = await res.json()
+      const content = data.content?.[0]?.text ?? ''
+
+      return {
+        content,
+        usage: {
+          inputTokens: data.usage?.input_tokens ?? 0,
+          outputTokens: data.usage?.output_tokens ?? 0,
+        },
+      }
+    } catch (err) {
+      if (err instanceof RateLimitError) throw err
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new TimeoutError(TIMEOUT_MS)
+      }
+      throw err
+    } finally {
+      clearTimeout(timeout)
     }
   }
 }

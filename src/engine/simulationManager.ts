@@ -2,6 +2,7 @@ import { Simulation, SimulationEventHandler } from './simulation'
 import { setLLMProvider } from './llm/provider'
 import { ClaudeProvider } from './llm/claude'
 import { OpenAIProvider } from './llm/openai'
+import { loadSimulation } from './persistence'
 import type { SSEEvent } from './types'
 
 let simulation: Simulation | null = null
@@ -19,7 +20,15 @@ export function getSimulation(): Simulation {
     }
 
     const useLLM = !!(anthropicKey || openaiKey)
-    simulation = new Simulation(useLLM)
+
+    // Try to load from save file
+    const save = loadSimulation()
+    if (save) {
+      console.log('[SimulationManager] Restoring from save file...')
+      simulation = Simulation.fromSaveFile(save, useLLM)
+    } else {
+      simulation = new Simulation(useLLM)
+    }
 
     if (!useLLM) {
       console.warn('[Simulation] No LLM API key configured. Running in fallback mode.')

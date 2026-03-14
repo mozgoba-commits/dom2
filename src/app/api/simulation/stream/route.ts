@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { subscribeSSE } from '../../../../engine/simulationManager'
+import { subscribeSSE, getSimulation } from '../../../../engine/simulationManager'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,6 +18,15 @@ export async function GET(req: NextRequest) {
 
       // Send initial ping
       send({ type: 'connected', tick: 0, data: {} })
+
+      // Send catch-up summary
+      try {
+        const sim = getSimulation()
+        const catchUpData = sim.getCatchUpData()
+        send({ type: 'catch_up', tick: sim.state.clock.tick, data: catchUpData })
+      } catch {
+        // Simulation might not be ready yet
+      }
 
       const unsubscribe = subscribeSSE((event) => {
         send(event)

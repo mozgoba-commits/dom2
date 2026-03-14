@@ -95,6 +95,20 @@ export class RelationshipGraph {
       .filter(r => r.romance >= minRomance)
       .sort((a, b) => b.romance - a.romance)
   }
+
+  /** Serialize all relationships for persistence */
+  toJSON(): Relationship[] {
+    return [...this.relationships.values()]
+  }
+
+  /** Load relationships from save data */
+  loadData(relationships: Relationship[]) {
+    this.relationships.clear()
+    for (const rel of relationships) {
+      const k = this.key(rel.agentAId, rel.agentBId)
+      this.relationships.set(k, rel)
+    }
+  }
 }
 
 function clamp(val: number, min: number, max: number): number {

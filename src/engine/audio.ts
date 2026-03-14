@@ -35,7 +35,7 @@ export function isMutedState(): boolean {
 
 // --- Notification sounds ---
 
-export function playNotification(type: 'drama' | 'message' | 'vote' | 'eviction') {
+export function playNotification(type: 'drama' | 'message' | 'vote' | 'eviction' | 'conversation_start' | 'voting_open' | 'tok_show_start') {
   if (isMuted) return
   const ctx = getCtx()
   const gain = ctx.createGain()
@@ -115,6 +115,76 @@ export function playNotification(type: 'drama' | 'message' | 'vote' | 'eviction'
       gain.gain.exponentialRampToValueAtTime(0.001, now + 2.0)
       osc.start(now)
       osc.stop(now + 2.0)
+      break
+    }
+
+    case 'conversation_start': {
+      // Soft double-blip
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.connect(gain)
+      osc.frequency.setValueAtTime(400, now)
+      osc.frequency.setValueAtTime(500, now + 0.1)
+      gain.gain.setValueAtTime(0, now)
+      gain.gain.linearRampToValueAtTime(0.06, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25)
+      osc.start(now)
+      osc.stop(now + 0.25)
+      break
+    }
+
+    case 'voting_open': {
+      // Dramatic rising three-note chime
+      const osc1 = ctx.createOscillator()
+      osc1.type = 'triangle'
+      osc1.connect(gain)
+      osc1.frequency.setValueAtTime(220, now)
+      gain.gain.setValueAtTime(0, now)
+      gain.gain.linearRampToValueAtTime(0.12, now + 0.05)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4)
+      osc1.start(now)
+      osc1.stop(now + 0.4)
+
+      const gain2 = ctx.createGain()
+      gain2.connect(getGain())
+      const osc2 = ctx.createOscillator()
+      osc2.type = 'triangle'
+      osc2.connect(gain2)
+      osc2.frequency.setValueAtTime(330, now + 0.2)
+      gain2.gain.setValueAtTime(0, now + 0.2)
+      gain2.gain.linearRampToValueAtTime(0.12, now + 0.25)
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6)
+      osc2.start(now + 0.2)
+      osc2.stop(now + 0.6)
+
+      const gain3 = ctx.createGain()
+      gain3.connect(getGain())
+      const osc3 = ctx.createOscillator()
+      osc3.type = 'triangle'
+      osc3.connect(gain3)
+      osc3.frequency.setValueAtTime(440, now + 0.4)
+      gain3.gain.setValueAtTime(0, now + 0.4)
+      gain3.gain.linearRampToValueAtTime(0.15, now + 0.45)
+      gain3.gain.exponentialRampToValueAtTime(0.001, now + 1.0)
+      osc3.start(now + 0.4)
+      osc3.stop(now + 1.0)
+      break
+    }
+
+    case 'tok_show_start': {
+      // Fanfare-style descending then ascending
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.connect(gain)
+      osc.frequency.setValueAtTime(500, now)
+      osc.frequency.setValueAtTime(400, now + 0.15)
+      osc.frequency.setValueAtTime(600, now + 0.3)
+      gain.gain.setValueAtTime(0, now)
+      gain.gain.linearRampToValueAtTime(0.1, now + 0.03)
+      gain.gain.linearRampToValueAtTime(0.08, now + 0.3)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6)
+      osc.start(now)
+      osc.stop(now + 0.6)
       break
     }
   }
@@ -206,9 +276,30 @@ export function startAmbient(timeOfDay: 'morning' | 'afternoon' | 'evening' | 'n
       break
     }
 
-    case 'afternoon':
-      // Quiet — no ambient
+    case 'afternoon': {
+      // Gentle warm ambient — soft mid-range hum
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      const lfo = ctx.createOscillator()
+      const lfoGain = ctx.createGain()
+
+      osc.type = 'sine'
+      osc.frequency.value = 250
+      lfo.type = 'sine'
+      lfo.frequency.value = 0.15
+      lfoGain.gain.value = 8
+
+      lfo.connect(lfoGain)
+      lfoGain.connect(osc.frequency)
+      osc.connect(gain)
+      gain.gain.value = 0.004
+      gain.connect(getGain())
+
+      osc.start()
+      lfo.start()
+      ambientNodes.push(osc, lfo)
       break
+    }
   }
 }
 

@@ -40,20 +40,22 @@ export default function ChatPanel() {
   const [hostTarget, setHostTarget] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
 
-  const sendHostMessage = useCallback(async () => {
-    if (!hostMessage.trim() || sending) return
+  const sendHostMessage = useCallback(async (type: 'message' | 'task' | 'twist' = 'message', overrideMsg?: string) => {
+    const msg = overrideMsg ?? hostMessage.trim()
+    if (!msg || sending) return
     setSending(true)
     try {
       await fetch('/api/host/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          type,
           targetAgentId: hostTarget,
-          message: hostMessage.trim(),
+          message: msg,
           broadcast: !hostTarget,
         }),
       })
-      setHostMessage('')
+      if (!overrideMsg) setHostMessage('')
     } catch (e) {
       console.warn('Failed to send host message:', e)
     } finally {
@@ -163,13 +165,34 @@ export default function ChatPanel() {
             className="flex-1 bg-gray-800 text-white text-[11px] px-2 py-1 rounded border border-gray-600 focus:border-yellow-600 outline-none disabled:opacity-50"
           />
           <button
-            onClick={sendHostMessage}
+            onClick={() => sendHostMessage()}
             disabled={sending || !hostMessage.trim()}
             className="bg-yellow-600 text-black px-2 py-1 rounded text-[11px] font-bold disabled:opacity-40 hover:bg-yellow-500 transition-colors"
           >
             {sending ? '...' : '>'}
           </button>
         </div>
+
+        {/* Preset action buttons */}
+        <div className="flex gap-1 mt-1.5 flex-wrap">
+          {[
+            { label: 'Секретное задание', type: 'task' as const, msg: 'У тебя секретное задание от ведущего: стань ближе к тому, кого ты знаешь хуже всего' },
+            { label: 'Подстрекать', type: 'twist' as const, msg: 'Ведущий объявляет: кто-то из вас говорит за спиной о других. Выясните кто!' },
+            { label: 'Раскрыть секрет', type: 'twist' as const, msg: 'Внимание! Ведущий раскрывает секрет: один из участников пришёл на проект не за любовью, а за победой!' },
+            { label: 'Иммунитет', type: 'twist' as const, msg: 'Ведущий дарит иммунитет!' },
+          ].map(preset => (
+            <button
+              key={preset.label}
+              onClick={() => sendHostMessage(preset.type, preset.msg)}
+              disabled={sending}
+              className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700 text-yellow-500 hover:bg-gray-600 hover:text-yellow-400 transition-colors disabled:opacity-40"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Target selector */}
         <div className="flex gap-1 mt-1 flex-wrap">
           <button
             onClick={() => setHostTarget(null)}

@@ -6,7 +6,8 @@ import { getCriticalNeeds } from '../agents/personality'
 import { pickInteractionTarget } from '../agents/attractionMatrix'
 import { MemoryStore } from '../memory/memoryStore'
 import { RelationshipGraph } from '../relationships/graph'
-import { llmGenerateJSON } from '../llm/provider'
+import { llmGenerateJSON, isLLMAvailable } from '../llm/provider'
+import { LLMCallPriority } from '../llm/budgetTracker'
 import { buildDecisionPrompt } from '../llm/promptBuilder'
 
 interface LLMDecisionResponse {
@@ -70,7 +71,7 @@ export async function makeDecision(
 
   // --- Need-based decisions ---
   const criticalNeeds = getCriticalNeeds(agent)
-  const others = allAgents.filter(a => a.id !== agent.id && !a.isEvicted)
+  const others = allAgents.filter(a => a.id !== agent.id && !a.isEvicted && a.status !== 'sleeping')
 
   if (criticalNeeds.length > 0) {
     const primaryNeed = criticalNeeds[0]
@@ -133,14 +134,14 @@ export async function makeDecision(
   }
 
   // --- LLM decision ---
-  if (useLLM) {
+  if (useLLM && isLLMAvailable(LLMCallPriority.DECISION)) {
     try {
       const nearbyAgents = others.filter(a => a.location === agent.location)
       const recentMemories = memoryStore.getRecentMemories(agent.id, 10)
       const relationships = relationshipGraph.getForAgent(agent.id)
 
       const prompt = buildDecisionPrompt(agent, clock, nearbyAgents, recentMemories, relationships)
-      const response = await llmGenerateJSON<LLMDecisionResponse>(prompt, 'cheap')
+      const response = await llmGenerateJSON<LLMDecisionResponse>(prompt, 'cheap', LLMCallPriority.DECISION)
 
       const targetAgent = response.targetAgent
         ? allAgents.find(a => a.bio.name === response.targetAgent)

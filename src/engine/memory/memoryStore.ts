@@ -153,4 +153,21 @@ export class MemoryStore {
     }
     return [...unique.values()].sort((a, b) => a.tick - b.tick)
   }
+
+  /** Serialize for persistence */
+  toJSON(): { shortTerm: Record<string, Memory[]>; longTerm: Record<string, Memory[]> } {
+    const shortTerm: Record<string, Memory[]> = {}
+    const longTerm: Record<string, Memory[]> = {}
+    for (const [k, v] of this.shortTerm) shortTerm[k] = v
+    for (const [k, v] of this.longTerm) longTerm[k] = v
+    return { shortTerm, longTerm }
+  }
+
+  /** Load from save data */
+  loadData(data: { shortTerm: Record<string, Memory[]>; longTerm: Record<string, Memory[]> }) {
+    this.shortTerm.clear()
+    this.longTerm.clear()
+    for (const [k, v] of Object.entries(data.shortTerm)) this.shortTerm.set(k, v)
+    for (const [k, v] of Object.entries(data.longTerm)) this.longTerm.set(k, v)
+  }
 }

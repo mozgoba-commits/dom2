@@ -1,7 +1,8 @@
 import { Agent, GameEvent } from '../types'
 import { RelationshipGraph } from '../relationships/graph'
 import { MemoryStore } from '../memory/memoryStore'
-import { llmGenerate } from '../llm/provider'
+import { llmGenerate, isLLMAvailable } from '../llm/provider'
+import { LLMCallPriority } from '../llm/budgetTracker'
 import { buildTokShowPrompt } from '../llm/promptBuilder'
 
 interface TokShowResult {
@@ -78,10 +79,10 @@ export async function runTokShow(
   for (const agent of sorted) {
     let text: string
 
-    if (useLLM) {
+    if (useLLM && isLLMAvailable(LLMCallPriority.CONVERSATION)) {
       try {
         const prompt = buildTokShowPrompt(agent, topic, statements)
-        const response = await llmGenerate(prompt, 'strong')
+        const response = await llmGenerate(prompt, 'strong', LLMCallPriority.CONVERSATION)
         text = response.content
       } catch {
         text = generateFallbackTokShowLine(agent, topic)

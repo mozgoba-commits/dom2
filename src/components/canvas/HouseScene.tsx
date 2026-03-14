@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useState } from 'react'
 import { useSimulationStore } from '../../store/simulationStore'
 import { useViewStore } from '../../store/viewStore'
 import { useWalkingStore } from '../../store/walkingStore'
@@ -12,6 +12,16 @@ import { drawEnvironment } from './drawEnvironment'
 import { getAppearance } from './spriteConfig'
 import { emitParticles, tickParticles, drawParticles } from './particleSystem'
 import { clampToWalkable } from '../../engine/collisionMap'
+
+// ─── Bed center positions in native canvas coords ───────────
+// Must match drawBed() calls in drawEnvironment.ts
+// Bedroom r = { x: 0, y: 133, w: 157, h: 147 }
+const BED_CENTERS = [
+  { x: 6 + 17, y: 133 + 14 + 8 },   // bed 1 top-left (blue)
+  { x: 6 + 17, y: 133 + 147 - 30 + 8 }, // bed 2 bottom-left (pink)
+  { x: 157 - 42 + 17, y: 133 + 14 + 8 }, // bed 3 top-right (green)
+  { x: 157 - 42 + 17, y: 133 + 147 - 30 + 8 }, // bed 4 bottom-right (purple)
+]
 
 // ─── Layout constants (exported for SpeechBubbles) ──────────
 
@@ -79,13 +89,21 @@ export default function HouseScene() {
     const ws = walkingStore.getState()
     const as = animationStore.getState()
     const positionCache = new Map<string, { x: number; y: number }>()
+    let bedIdx = 0
     for (const agent of agents) {
-      const walkPos = ws.getPosition(agent.id)
-      if (walkPos) {
-        positionCache.set(agent.id, walkPos)
+      // Sleeping agents go directly on bed centers (bypass remapping)
+      if (agent.status === 'sleeping' && agent.location === 'bedroom') {
+        const bed = BED_CENTERS[bedIdx % BED_CENTERS.length]
+        bedIdx++
+        positionCache.set(agent.id, bed)
       } else {
-        const remapped = remapPosition(agent.location, agent.position)
-        positionCache.set(agent.id, clampToWalkable(agent.location, remapped.x, remapped.y))
+        const walkPos = ws.getPosition(agent.id)
+        if (walkPos) {
+          positionCache.set(agent.id, walkPos)
+        } else {
+          const remapped = remapPosition(agent.location, agent.position)
+          positionCache.set(agent.id, clampToWalkable(agent.location, remapped.x, remapped.y))
+        }
       }
     }
 
@@ -242,17 +260,87 @@ export default function HouseScene() {
     }
   }
 
+  const isConnected = useSimulationStore(s => s.isConnected)
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+
+  const handleScreenshot = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const url = canvas.toDataURL('image/png')
+    setShareUrl(url)
+  }
+
+  // Loading overlay
+  const showLoading = !isConnected || agents.length === 0
+
   return (
-    <canvas
-      ref={canvasRef}
-      onClick={handleClick}
-      onTouchEnd={handleTouchEnd}
-      className="cursor-pointer border border-gray-700 rounded-lg touch-manipulation"
-      style={{
-        width: NATIVE_W * SCALE,
-        height: NATIVE_H * SCALE,
-        imageRendering: 'pixelated',
-      }}
-    />
+    <div className="relative">
+      <canvas
+        ref={canvasRef}
+        onClick={handleClick}
+        onTouchEnd={handleTouchEnd}
+        className="cursor-pointer border border-gray-700 rounded-lg touch-manipulation"
+        style={{
+          width: NATIVE_W * SCALE,
+          height: NATIVE_H * SCALE,
+          imageRendering: 'pixelated',
+        }}
+      />
+
+      {/* Loading overlay */}
+      {showLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-lg">
+          <div className="text-center">
+            <p className="text-white text-lg font-bold animate-pulse">
+              Connecting to Big Brother AI...
+            </p>
+            <p className="text-gray-400 text-sm mt-2">Подключение к симуляции</p>
+          </div>
+        </div>
+      )}
+
+      {/* Camera button */}
+      {!showLoading && (
+        <button
+          onClick={handleScreenshot}
+          className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs px-2 py-1 rounded transition-colors"
+          title="Скриншот"
+        >
+          [cam]
+        </button>
+      )}
+
+      {/* Share modal */}
+      {shareUrl && (
+        <ShareModalInline imageUrl={shareUrl} onClose={() => setShareUrl(null)} />
+      )}
+    </div>
+  )
+}
+
+function ShareModalInline({ imageUrl, onClose }: { imageUrl: string; onClose: () => void }) {
+  const handleDownload = () => {
+    const a = document.createElement('a')
+    a.href = imageUrl
+    a.download = 'dom2-screenshot.png'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+  return (
+    <div className="absolute inset-0 bg-black/80 flex items-center justify-center rounded-lg z-10" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 max-w-xs" onClick={e => e.stopPropagation()}>
+        <img src={imageUrl} alt="Screenshot" className="w-full rounded mb-2" style={{ imageRendering: 'pixelated' }} />
+        <div className="flex gap-2">
+          <button onClick={handleDownload} className="flex-1 py-1 bg-gray-800 text-white text-xs rounded hover:bg-gray-700">
+            Скачать
+          </button>
+          <button onClick={onClose} className="px-2 py-1 text-gray-500 text-xs hover:text-gray-300">
+            Закрыть
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

@@ -114,9 +114,9 @@ export function clampToWalkable(room: LocationId, x: number, y: number): { x: nu
   const floor = ROOM_FLOORS[room]
   if (!floor) return { x, y }
 
-  // Clamp to floor bounds
-  let cx = Math.max(floor.x + 6, Math.min(floor.x + floor.w - 6, x))
-  let cy = Math.max(floor.y + 6, Math.min(floor.y + floor.h - 4, y))
+  // Clamp to floor bounds (minimal padding to allow reaching doors)
+  let cx = Math.max(floor.x + 1, Math.min(floor.x + floor.w - 1, x))
+  let cy = Math.max(floor.y + 1, Math.min(floor.y + floor.h - 1, y))
 
   // Push out of obstacles
   const obstacles = OBSTACLES[room]
@@ -137,8 +137,8 @@ export function clampToWalkable(room: LocationId, x: number, y: number): { x: nu
   }
 
   // Re-clamp after push
-  cx = Math.max(floor.x + 6, Math.min(floor.x + floor.w - 6, cx))
-  cy = Math.max(floor.y + 6, Math.min(floor.y + floor.h - 4, cy))
+  cx = Math.max(floor.x + 1, Math.min(floor.x + floor.w - 1, cx))
+  cy = Math.max(floor.y + 1, Math.min(floor.y + floor.h - 1, cy))
 
   return { x: Math.round(cx), y: Math.round(cy) }
 }
@@ -161,19 +161,22 @@ export function randomWalkablePosition(room: LocationId): { x: number; y: number
   return clampToWalkable(room, floor.x + floor.w / 2, floor.y + floor.h / 2)
 }
 
-/** Resolve collision for a walking step: if next position is blocked, slide along obstacle */
+/** Resolve collision for a walking step: if next position is blocked, slide along obstacle.
+ *  Uses minimal edge padding (1px) so characters can reach door gaps between rooms. */
 export function resolveWalkingCollision(
   room: LocationId,
   fromX: number, fromY: number,
   toX: number, toY: number,
 ): { x: number; y: number } {
+  const floor = ROOM_FLOORS[room]
+  const EDGE = 1 // minimal padding — lets characters reach room edges and cross through doors
+
   // Check if destination is valid
   if (!isInObstacle(toX, toY, room)) {
-    // Still clamp to floor
-    const floor = ROOM_FLOORS[room]
+    // Clamp to floor with minimal edge padding
     if (floor) {
-      toX = Math.max(floor.x + 6, Math.min(floor.x + floor.w - 6, toX))
-      toY = Math.max(floor.y + 6, Math.min(floor.y + floor.h - 4, toY))
+      toX = Math.max(floor.x + EDGE, Math.min(floor.x + floor.w - EDGE, toX))
+      toY = Math.max(floor.y + EDGE, Math.min(floor.y + floor.h - EDGE, toY))
     }
     return { x: toX, y: toY }
   }

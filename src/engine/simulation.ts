@@ -1,5 +1,5 @@
 import {
-  Agent, SimulationState, SSEEvent, LocationId, GameEvent, Relationship,
+  Agent, SimulationState, SSEEvent, LocationId, GameEvent, Relationship, EpisodeInfo,
 } from './types'
 import { createClock, advanceClock, isNightTime, formatGameTime } from './clock'
 import { createStartingCast } from './agents/presets'
@@ -22,6 +22,10 @@ import { calculateImportance } from './memory/importance'
 import { generateReflection } from './memory/reflectionEngine'
 import { generateDayPlan } from './agents/planner'
 import { OLD_ROOM_BOUNDS } from './coordinates'
+import { budgetTracker } from './llm/budgetTracker'
+import { saveSimulation, type SaveFile } from './persistence'
+import { exportGossipItems, importGossipItems } from './memory/gossipNetwork'
+import { calculateEpisode, isVotingDay, isTokShowDay, determineWinner } from './episodes/episodeManager'
 
 // --- Constants ---
 const TICK_INTERVAL_MS = 5000
@@ -32,6 +36,8 @@ const ALERT_DEDUP_WINDOW = 30
 const ALERT_CLEANUP_INTERVAL = 60
 const REFLECTION_INTERVAL = 30
 const MAX_REFLECTIONS_PER_TICK = 2
+const AUTO_SAVE_INTERVAL = 10 // save every 10 ticks (~50s)
+const BUDGET_LOG_INTERVAL = 12 // log stats every 12 ticks (~1 min)
 
 export type SimulationEventHandler = (event: SSEEvent) => void
 
@@ -49,6 +55,15 @@ export class Simulation {
   private lastReflectionTick = 0
   private reflectionRotation = 0 // index into agents array for fair rotation
   private lastPlanDay = 0
+
+  // Speed controls
+  private speedMultiplier = 1
+  private _isPaused = false
+  private baseTickIntervalMs = TICK_INTERVAL_MS
+
+  // Episode tracking
+  private currentEpisode: EpisodeInfo | null = null
+  private finaleEmitted = false
 
   constructor(useLLM = true) {
     this.useLLM = useLLM
@@ -78,11 +93,96 @@ export class Simulation {
     }
   }
 
+  /** Construct simulation from a saved state */
+  static fromSaveFile(save: SaveFile, useLLM: boolean): Simulation {
+    const sim = new Simulation(useLLM)
+
+    // Restore state
+    sim.state.agents = save.state.agents
+    sim.state.clock = save.state.clock
+    sim.state.drama = save.state.drama
+    sim.state.votingQueue = save.state.votingQueue
+
+    // Restore subsystems
+    sim.relationshipGraph.loadData(save.subsystems.relationships)
+
+    sim.memoryStore.loadData({
+      shortTerm: save.subsystems.shortTermMemories,
+      longTerm: save.subsystems.longTermMemories,
+    })
+
+    // Filter only active conversations for loading (ended ones don't need to be tracked)
+    const activeConvs = save.subsystems.conversations
+      .map(({ _raw, ...conv }) => conv)
+      .filter(c => c.endedAtTick === null)
+    sim.conversationEngine.loadData(activeConvs)
+
+    sim.eventScheduler.loadData({
+      events: save.subsystems.events,
+      lastTokShowDay: save.subsystems.schedulerState.lastTokShowDay,
+      lastVotingDay: save.subsystems.schedulerState.lastVotingDay,
+    })
+
+    sim.votingEngine.loadData(save.subsystems.votingSessions)
+
+    if (save.subsystems.gossipItems) {
+      importGossipItems(save.subsystems.gossipItems)
+    }
+
+    // Restore simulation meta
+    sim.lastReflectionTick = save.simulationMeta.lastReflectionTick
+    sim.reflectionRotation = save.simulationMeta.reflectionRotation
+    sim.lastPlanDay = save.simulationMeta.lastPlanDay
+    for (const [k, v] of save.simulationMeta.recentAlerts) {
+      sim.recentAlerts.set(k, v)
+    }
+
+    console.log(`[Persistence] Restored simulation from save. Day ${save.state.clock.day}, Tick ${save.state.clock.tick}`)
+    return sim
+  }
+
+  /** Serialize full simulation state for persistence */
+  saveState(): SaveFile {
+    const memData = this.memoryStore.toJSON()
+    const schedulerData = this.eventScheduler.toJSON()
+
+    return {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      state: {
+        agents: this.state.agents,
+        clock: this.state.clock,
+        drama: this.state.drama,
+        isRunning: this.state.isRunning,
+        votingQueue: this.state.votingQueue,
+      },
+      subsystems: {
+        relationships: this.relationshipGraph.toJSON(),
+        shortTermMemories: memData.shortTerm,
+        longTermMemories: memData.longTerm,
+        conversations: this.conversationEngine.toJSON().map(c => ({ ...c, _raw: true as const })),
+        events: schedulerData.events,
+        schedulerState: {
+          lastTokShowDay: schedulerData.lastTokShowDay,
+          lastVotingDay: schedulerData.lastVotingDay,
+        },
+        votingSessions: this.votingEngine.toJSON(),
+        gossipItems: exportGossipItems(),
+      },
+      simulationMeta: {
+        lastReflectionTick: this.lastReflectionTick,
+        reflectionRotation: this.reflectionRotation,
+        lastPlanDay: this.lastPlanDay,
+        recentAlerts: [...this.recentAlerts.entries()],
+      },
+    }
+  }
+
   onEvent(handler: SimulationEventHandler) {
     this.eventHandlers.push(handler)
   }
 
-  private emit(event: SSEEvent) {
+  emit(event: SSEEvent) {
     for (const handler of this.eventHandlers) {
       handler(event)
     }
@@ -91,8 +191,10 @@ export class Simulation {
   start(tickIntervalMs = TICK_INTERVAL_MS) {
     if (this.state.isRunning) return
     this.state.isRunning = true
-    console.log(`[Simulation] Started. Tick every ${tickIntervalMs}ms`)
-    this.tickInterval = setInterval(() => this.tick(), tickIntervalMs)
+    this.baseTickIntervalMs = tickIntervalMs
+    const interval = this._isPaused ? tickIntervalMs : tickIntervalMs / this.speedMultiplier
+    console.log(`[Simulation] Started. Tick every ${interval}ms`)
+    this.tickInterval = setInterval(() => this.tick(), interval)
   }
 
   stop() {
@@ -104,7 +206,50 @@ export class Simulation {
     console.log('[Simulation] Stopped')
   }
 
+  // --- Speed controls ---
+
+  setSpeed(multiplier: number) {
+    if (multiplier === 0) {
+      this.pause()
+      return
+    }
+    this.speedMultiplier = multiplier
+    this._isPaused = false
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval)
+      const interval = this.baseTickIntervalMs / this.speedMultiplier
+      this.tickInterval = setInterval(() => this.tick(), interval)
+      console.log(`[Simulation] Speed set to ${multiplier}x (tick every ${interval}ms)`)
+    }
+  }
+
+  pause() {
+    this._isPaused = true
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval)
+      this.tickInterval = null
+    }
+    console.log('[Simulation] Paused')
+  }
+
+  resume() {
+    if (!this._isPaused) return
+    this._isPaused = false
+    const interval = this.baseTickIntervalMs / this.speedMultiplier
+    this.tickInterval = setInterval(() => this.tick(), interval)
+    console.log('[Simulation] Resumed')
+  }
+
+  isPaused(): boolean {
+    return this._isPaused
+  }
+
+  getSpeed(): number {
+    return this._isPaused ? 0 : this.speedMultiplier
+  }
+
   async tick() {
+    if (this._isPaused) return
     try {
       await this.processTick()
     } catch (error) {
@@ -112,12 +257,145 @@ export class Simulation {
     }
   }
 
+  /** Apply a host twist to the simulation */
+  applyTwist(type: string, data: Record<string, unknown>) {
+    const tick = this.state.clock.tick
+
+    switch (type) {
+      case 'immunity': {
+        const agentId = data.agentId as string
+        const agent = this.state.agents.find(a => a.id === agentId)
+        if (agent) {
+          agent.hasImmunity = true
+          this.emit({
+            type: 'drama_alert',
+            data: { message: `[ВЕДУЩИЙ] ${agent.bio.name} получает иммунитет от выселения!` },
+            tick,
+          })
+        }
+        break
+      }
+      case 'secret_reveal': {
+        const message = data.message as string
+        this.emit({
+          type: 'drama_alert',
+          data: { message: `[СЕКРЕТ] ${message}` },
+          tick,
+        })
+        break
+      }
+      case 'forced_nomination': {
+        const agentId = data.agentId as string
+        const agent = this.state.agents.find(a => a.id === agentId)
+        if (agent) {
+          this.emit({
+            type: 'drama_alert',
+            data: { message: `[ВЕДУЩИЙ] ${agent.bio.name} автоматически номинирован(а)!` },
+            tick,
+          })
+        }
+        break
+      }
+      case 'return_all': {
+        const returned: string[] = []
+        for (const agent of this.state.agents) {
+          if (!agent.isEvicted) continue
+          agent.isEvicted = false
+          agent.evictedOnDay = null
+          agent.status = 'free'
+          agent.location = 'yard'
+          agent.position = getLocationPosition('yard', this.state.agents.indexOf(agent))
+          returned.push(agent.bio.name)
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: 'yard', position: agent.position },
+            tick,
+          })
+        }
+        if (returned.length > 0) {
+          this.emit({
+            type: 'drama_alert',
+            data: { message: `[ВЕДУЩИЙ] Все участники возвращаются! ${returned.join(', ')} снова в проекте!` },
+            tick,
+          })
+        }
+        break
+      }
+    }
+  }
+
+  /** Generate catch-up summary for newly connected client */
+  getCatchUpData() {
+    const activeAgents = this.state.agents.filter(a => !a.isEvicted)
+    const evictedAgents = this.state.agents.filter(a => a.isEvicted)
+
+    // Relationship highlights (strongest positive and negative)
+    const rels = this.relationshipGraph.getAll()
+    const topFriends = [...rels].sort((a, b) => b.friendship - a.friendship).slice(0, 3)
+    const topRivals = [...rels].sort((a, b) => b.rivalry - a.rivalry).slice(0, 3)
+    const topRomance = [...rels].sort((a, b) => b.romance - a.romance).slice(0, 3)
+
+    const getName = (id: string) => this.state.agents.find(a => a.id === id)?.bio.name ?? '?'
+
+    return {
+      clock: this.state.clock,
+      activeAgentCount: activeAgents.length,
+      evictions: evictedAgents.map(a => ({ name: a.bio.name, day: a.evictedOnDay })),
+      episode: this.currentEpisode,
+      drama: this.state.drama,
+      relationshipHighlights: {
+        friends: topFriends.map(r => ({ a: getName(r.agentAId), b: getName(r.agentBId), score: r.friendship })),
+        rivals: topRivals.filter(r => r.rivalry > 20).map(r => ({ a: getName(r.agentAId), b: getName(r.agentBId), score: r.rivalry })),
+        romances: topRomance.filter(r => r.romance > 20).map(r => ({ a: getName(r.agentAId), b: getName(r.agentBId), score: r.romance })),
+      },
+      speed: this.getSpeed(),
+      isPaused: this._isPaused,
+    }
+  }
+
   async processTick() {
     const { state } = this
+
+    // Budget tracker tick start
+    budgetTracker.startTick()
 
     // 1. Advance clock
     state.clock = advanceClock(state.clock)
     const tick = state.clock.tick
+
+    // Episode tracking
+    const activeAgents = state.agents.filter(a => !a.isEvicted)
+    const prevEpisode = this.currentEpisode
+    this.currentEpisode = calculateEpisode(state.clock, activeAgents.length)
+
+    if (prevEpisode && prevEpisode.episodeNumber !== this.currentEpisode.episodeNumber) {
+      this.emit({
+        type: 'episode_change',
+        data: { episode: this.currentEpisode },
+        tick,
+      })
+    }
+
+    // Finale check
+    if (this.currentEpisode.isFinale && !this.finaleEmitted && activeAgents.length <= 2) {
+      const winnerId = determineWinner(
+        activeAgents.map(a => a.id),
+        this.relationshipGraph.getAll()
+      )
+      const winner = this.state.agents.find(a => a.id === winnerId)
+      if (winner) {
+        this.finaleEmitted = true
+        this.emit({
+          type: 'finale',
+          data: {
+            winnerId: winner.id,
+            winnerName: winner.bio.name,
+            episode: this.currentEpisode,
+          },
+          tick,
+        })
+      }
+    }
 
     // 2. Decay needs
     state.agents = state.agents.map(agent => {
@@ -360,16 +638,16 @@ export class Simulation {
     // 10b. Reflections — every 30 ticks, 1-2 agents synthesize insights
     if (tick - this.lastReflectionTick >= REFLECTION_INTERVAL && this.useLLM) {
       this.lastReflectionTick = tick
-      const activeAgents = state.agents.filter(a => !a.isEvicted)
-      const count = Math.min(MAX_REFLECTIONS_PER_TICK, activeAgents.length)
+      const aliveAgents = state.agents.filter(a => !a.isEvicted)
+      const count = Math.min(MAX_REFLECTIONS_PER_TICK, aliveAgents.length)
       for (let i = 0; i < count; i++) {
-        const agentIdx = (this.reflectionRotation + i) % activeAgents.length
-        const agent = activeAgents[agentIdx]
+        const agentIdx = (this.reflectionRotation + i) % aliveAgents.length
+        const agent = aliveAgents[agentIdx]
         // Run async without blocking tick
         generateReflection(agent, this.memoryStore, tick - REFLECTION_INTERVAL, state.agents, tick)
           .catch(err => console.warn(`[Reflection] Error for ${agent.bio.name}:`, err))
       }
-      this.reflectionRotation = (this.reflectionRotation + count) % Math.max(1, activeAgents.length)
+      this.reflectionRotation = (this.reflectionRotation + count) % Math.max(1, aliveAgents.length)
     }
 
     // 10c. Day planning — at 08:00 each day
@@ -414,6 +692,9 @@ export class Simulation {
           type: e.type,
           location: e.location,
         })),
+        episode: this.currentEpisode,
+        speed: this.getSpeed(),
+        isPaused: this._isPaused,
       },
       tick,
     })
@@ -423,8 +704,24 @@ export class Simulation {
       console.log(
         `[${formatGameTime(state.clock)}] Drama: ${state.drama.overall} | ` +
         `Active convs: ${activeConvs.length} | ` +
-        `Agents: ${state.agents.filter(a => !a.isEvicted).length}`
+        `Agents: ${state.agents.filter(a => !a.isEvicted).length}` +
+        (this.currentEpisode ? ` | Ep.${this.currentEpisode.episodeNumber} Day${this.currentEpisode.dayWithinEpisode}` : '')
       )
+    }
+
+    // Budget stats logging
+    if (tick % BUDGET_LOG_INTERVAL === 0) {
+      budgetTracker.logStats()
+    }
+
+    // Auto-save
+    if (tick % AUTO_SAVE_INTERVAL === 0) {
+      try {
+        const save = this.saveState()
+        saveSimulation(save)
+      } catch (err) {
+        console.error('[Persistence] Auto-save failed:', err)
+      }
     }
   }
 
@@ -460,7 +757,7 @@ export class Simulation {
       case 'break_alliance': {
         if (!decision.targetAgentId) break
         const target = this.state.agents.find(a => a.id === decision.targetAgentId)
-        if (!target || target.isEvicted) break
+        if (!target || target.isEvicted || target.status === 'sleeping') break
 
         // Move to target's location if needed
         if (agent.location !== target.location) {
@@ -632,12 +929,41 @@ export class Simulation {
           },
           tick,
         })
+
+        // Emit periodic vote updates
+        const voteUpdateInterval = setInterval(() => {
+          const activeSession = this.votingEngine.getActiveSession()
+          if (!activeSession) {
+            clearInterval(voteUpdateInterval)
+            return
+          }
+          this.emit({
+            type: 'vote_update',
+            data: {
+              sessionId: activeSession.id,
+              totalVotes: Object.keys(activeSession.votes).length + Object.keys(activeSession.userVotes).length,
+            },
+            tick: this.state.clock.tick,
+          })
+        }, 3000)
+
         // Auto-tally after delay (in real app, wait for user votes)
         setTimeout(() => {
+          clearInterval(voteUpdateInterval)
           const evictedId = this.votingEngine.tallyVotes(session.id)
           if (evictedId) {
             const evicted = this.state.agents.find(a => a.id === evictedId)
             if (evicted) {
+              // Check immunity
+              if (evicted.hasImmunity) {
+                evicted.hasImmunity = false
+                this.emit({
+                  type: 'drama_alert',
+                  data: { message: `${evicted.bio.name} использует иммунитет и остаётся в проекте!` },
+                  tick: this.state.clock.tick,
+                })
+                return
+              }
               evicted.isEvicted = true
               evicted.evictedOnDay = this.state.clock.day
               this.emit({
@@ -713,6 +1039,10 @@ export class Simulation {
 
   getVotingSession() {
     return this.votingEngine.getActiveSession()
+  }
+
+  getEpisode(): EpisodeInfo | null {
+    return this.currentEpisode
   }
 }
 

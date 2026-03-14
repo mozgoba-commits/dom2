@@ -119,6 +119,7 @@ export interface Agent {
   evictedOnDay: number | null
   currentPlan?: AgentPlan
   activeVulnerability?: string  // behavioral shift from triggered vulnerability
+  hasImmunity?: boolean         // protected from eviction
 }
 
 // --- Relationships ---
@@ -265,6 +266,9 @@ export type SSEEventType =
   | 'drama_alert'
   | 'vote_update'
   | 'eviction'
+  | 'catch_up'
+  | 'episode_change'
+  | 'finale'
 
 export interface SSEEvent {
   type: SSEEventType
@@ -289,6 +293,28 @@ export type LLMModel = 'cheap' | 'strong'
 export interface LLMProvider {
   name: string
   generate(messages: LLMMessage[], model: LLMModel): Promise<LLMResponse>
+}
+
+// --- Episodes ---
+
+export interface EpisodeInfo {
+  episodeNumber: number
+  dayWithinEpisode: number    // 1-7
+  isFinale: boolean
+  phase: 'early' | 'mid' | 'late' | 'finale'
+}
+
+// --- Gossip (re-export for persistence) ---
+
+export interface GossipItem {
+  id: string
+  originContent: string
+  currentContent: string
+  originAgentId: string
+  spreadPath: string[]
+  tick: number
+  aboutAgentIds: string[]
+  distortionLevel: number
 }
 
 // --- Voting ---

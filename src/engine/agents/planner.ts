@@ -4,7 +4,8 @@
 import { Agent, AgentPlan } from '../types'
 import { MemoryStore } from '../memory/memoryStore'
 import { RelationshipGraph } from '../relationships/graph'
-import { llmGenerateJSON } from '../llm/provider'
+import { llmGenerateJSON, isLLMAvailable } from '../llm/provider'
+import { LLMCallPriority } from '../llm/budgetTracker'
 import { buildAgentSystemPrompt, stripThinking } from '../llm/promptBuilder'
 import { buildDailySummary } from '../memory/contextBuilder'
 import { GameClock } from '../types'
@@ -75,12 +76,16 @@ ${relSummary ? `Отношения: ${relSummary}` : ''}
 Ответь СТРОГО JSON:
 {"goals": ["цель 1", "цель 2", "цель 3"]}`
 
+  if (!isLLMAvailable(LLMCallPriority.PLANNING)) {
+    throw new Error('Budget unavailable for planning')
+  }
   const response = await llmGenerateJSON<LLMPlanResponse>(
     [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    'cheap'
+    'cheap',
+    LLMCallPriority.PLANNING,
   )
 
   return {

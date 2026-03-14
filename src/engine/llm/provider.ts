@@ -1,4 +1,6 @@
 import { LLMMessage, LLMModel, LLMProvider, LLMResponse } from '../types'
+import { budgetTracker, LLMCallPriority } from './budgetTracker'
+import { BudgetExceededError } from './errors'
 
 let currentProvider: LLMProvider | null = null
 
@@ -13,19 +15,37 @@ export function getLLMProvider(): LLMProvider {
   return currentProvider
 }
 
+export function isLLMAvailable(priority: LLMCallPriority = LLMCallPriority.CONVERSATION): boolean {
+  if (!currentProvider) return false
+  return budgetTracker.isBudgetAvailable(priority)
+}
+
 export async function llmGenerate(
   messages: LLMMessage[],
-  model: LLMModel = 'cheap'
+  model: LLMModel = 'cheap',
+  priority: LLMCallPriority = LLMCallPriority.CONVERSATION,
 ): Promise<LLMResponse> {
+  if (!budgetTracker.isBudgetAvailable(priority)) {
+    throw new BudgetExceededError()
+  }
+
   const provider = getLLMProvider()
-  return provider.generate(messages, model)
+  try {
+    const response = await provider.generate(messages, model)
+    budgetTracker.recordCall(priority, response.usage)
+    return response
+  } catch (err) {
+    budgetTracker.recordError()
+    throw err
+  }
 }
 
 export async function llmGenerateJSON<T>(
   messages: LLMMessage[],
-  model: LLMModel = 'cheap'
+  model: LLMModel = 'cheap',
+  priority: LLMCallPriority = LLMCallPriority.CONVERSATION,
 ): Promise<T> {
-  const response = await llmGenerate(messages, model)
+  const response = await llmGenerate(messages, model, priority)
   try {
     // Extract JSON from response (handle markdown code blocks)
     let content = response.content.trim()

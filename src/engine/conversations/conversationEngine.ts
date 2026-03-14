@@ -3,7 +3,8 @@ import {
 } from '../types'
 import { MemoryStore } from '../memory/memoryStore'
 import { RelationshipGraph } from '../relationships/graph'
-import { llmGenerate } from '../llm/provider'
+import { llmGenerate, isLLMAvailable } from '../llm/provider'
+import { LLMCallPriority } from '../llm/budgetTracker'
 import { buildConversationPrompt, stripThinking } from '../llm/promptBuilder'
 import { applyEmotionalImpact } from '../agents/personality'
 import { calculateImportance, EventCategory } from '../memory/importance'
@@ -117,7 +118,7 @@ export class ConversationEngine {
     let content: string
     let action: string | undefined
 
-    if (useLLM) {
+    if (useLLM && isLLMAvailable(LLMCallPriority.CONVERSATION)) {
       try {
         const recentMemories = memoryStore.getRecentMemories(speaker.id, 5)
         const relationship = relationshipGraph.get(speaker.id, otherAgent.id)
@@ -127,7 +128,7 @@ export class ConversationEngine {
           conv.topic ?? 'обычный разговор',
           memoryStore, agents, clock
         )
-        const response = await llmGenerate(prompt, 'cheap')
+        const response = await llmGenerate(prompt, 'cheap', LLMCallPriority.CONVERSATION)
         content = stripThinking(response.content)
 
         // Check for exit signal
@@ -284,6 +285,19 @@ export class ConversationEngine {
     return this.getActiveConversations().find(
       c => c.participants.includes(agentId)
     ) ?? null
+  }
+
+  /** Serialize for persistence */
+  toJSON(): Conversation[] {
+    return [...this.conversations.values()]
+  }
+
+  /** Load from save data */
+  loadData(conversations: Conversation[]) {
+    this.conversations.clear()
+    for (const conv of conversations) {
+      this.conversations.set(conv.id, conv)
+    }
   }
 }
 

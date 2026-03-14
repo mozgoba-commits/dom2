@@ -3,7 +3,8 @@
 
 import { Agent, Memory } from '../types'
 import { MemoryStore } from './memoryStore'
-import { llmGenerate } from '../llm/provider'
+import { llmGenerate, isLLMAvailable } from '../llm/provider'
+import { LLMCallPriority } from '../llm/budgetTracker'
 import { buildAgentSystemPrompt, stripThinking } from '../llm/promptBuilder'
 
 export function buildReflectionPrompt(agent: Agent, memories: Memory[], agents: Agent[]) {
@@ -53,8 +54,9 @@ export async function generateReflection(
   if (memories.length < 3) return null // not enough to reflect on
 
   try {
+    if (!isLLMAvailable(LLMCallPriority.REFLECTION)) return null
     const prompt = buildReflectionPrompt(agent, memories, agents)
-    const response = await llmGenerate(prompt, 'cheap')
+    const response = await llmGenerate(prompt, 'cheap', LLMCallPriority.REFLECTION)
     let reflection = stripThinking(response.content).trim()
 
     // Clean up: remove quotes if wrapped

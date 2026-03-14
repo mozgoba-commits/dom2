@@ -136,4 +136,20 @@ export class EventScheduler {
     this.events.push(event)
     return event
   }
+
+  /** Serialize for persistence */
+  toJSON() {
+    return {
+      events: this.events,
+      lastTokShowDay: this.lastTokShowDay,
+      lastVotingDay: this.lastVotingDay,
+    }
+  }
+
+  /** Load from save data */
+  loadData(data: { events: GameEvent[]; lastTokShowDay: number; lastVotingDay: number }) {
+    this.events = data.events
+    this.lastTokShowDay = data.lastTokShowDay
+    this.lastVotingDay = data.lastVotingDay
+  }
 }
