@@ -1,4 +1,4 @@
-import { Agent, DramaScore, LocationId } from '../types'
+import { Agent, DramaScore } from '../types'
 import { RelationshipGraph } from '../relationships/graph'
 import { applyEmotionalImpact } from '../agents/personality'
 
@@ -74,36 +74,3 @@ export function shouldTriggerEvent(drama: DramaScore): {
   return { shouldTrigger: false, type: null }
 }
 
-/**
- * Force two agents into proximity to trigger interaction.
- */
-export function forceEncounter(
-  agents: Agent[],
-  relationships: RelationshipGraph
-): { agentA: Agent; agentB: Agent; location: LocationId } | null {
-  const active = agents.filter(a => !a.isEvicted && a.status === 'free')
-  if (active.length < 2) return null
-
-  // Find the pair with highest rivalry (most drama potential)
-  let bestPair: { a: Agent; b: Agent; score: number } | null = null
-
-  for (let i = 0; i < active.length; i++) {
-    for (let j = i + 1; j < active.length; j++) {
-      const rel = relationships.get(active[i].id, active[j].id)
-      if (!rel) continue
-      const dramaScore = rel.rivalry + Math.abs(rel.friendship) + rel.romance * 0.5
-      if (!bestPair || dramaScore > bestPair.score) {
-        bestPair = { a: active[i], b: active[j], score: dramaScore }
-      }
-    }
-  }
-
-  if (!bestPair) return null
-
-  // Pick a shared location
-  const location: LocationId = bestPair.a.location === bestPair.b.location
-    ? bestPair.a.location
-    : 'kitchen' // kitchen is a natural gathering spot
-
-  return { agentA: bestPair.a, agentB: bestPair.b, location }
-}

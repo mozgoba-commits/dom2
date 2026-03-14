@@ -219,26 +219,3 @@ export function stopAmbient() {
   ambientNodes = []
 }
 
-// --- Campfire crackle ---
-
-export function playCampfireCrackle() {
-  if (isMuted) return
-  const ctx = getCtx()
-  const gain = ctx.createGain()
-  gain.connect(getGain())
-
-  // Short noise burst — very quiet
-  const bufferSize = ctx.sampleRate * 0.04
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
-  const data = buffer.getChannelData(0)
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * 0.15
-  }
-
-  const source = ctx.createBufferSource()
-  source.buffer = buffer
-  source.connect(gain)
-  gain.gain.setValueAtTime(0.04, ctx.currentTime)
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06)
-  source.start()
-}

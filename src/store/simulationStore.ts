@@ -1,35 +1,11 @@
 'use client'
 
 import { create } from 'zustand'
-import type { Agent, Conversation, DramaScore, GameClock, Mood, LocationId, SSEEvent } from '../engine/types'
+import type { DramaScore, GameClock, Mood, LocationId, SSEEvent } from '../engine/types'
 import { findPath } from '../engine/pathfinding'
+import { remapPosition } from '../engine/coordinates'
 import { useWalkingStore } from './walkingStore'
 import { useAnimationStore } from './animationStore'
-
-// Remap server positions to native canvas layout (duplicated from HouseScene to avoid circular deps)
-const OLD_LOCS: Record<LocationId, { x: number; y: number; w: number; h: number }> = {
-  yard:         { x: 0,   y: 0,   w: 320, h: 90  },
-  bedroom:      { x: 0,   y: 90,  w: 100, h: 100 },
-  living_room:  { x: 100, y: 90,  w: 120, h: 100 },
-  kitchen:      { x: 220, y: 90,  w: 100, h: 100 },
-  bathroom:     { x: 0,   y: 190, w: 100, h: 50  },
-  confessional: { x: 100, y: 190, w: 120, h: 50  },
-}
-const NEW_LOCS: Record<LocationId, { x: number; y: number; w: number; h: number }> = {
-  yard:         { x: 0,   y: 0,   w: 480, h: 130 },
-  bedroom:      { x: 0,   y: 133, w: 157, h: 147 },
-  living_room:  { x: 160, y: 133, w: 157, h: 147 },
-  kitchen:      { x: 320, y: 133, w: 160, h: 147 },
-  bathroom:     { x: 0,   y: 283, w: 157, h: 77  },
-  confessional: { x: 160, y: 283, w: 157, h: 77  },
-}
-function storeRemapPosition(location: LocationId, pos: { x: number; y: number }) {
-  const o = OLD_LOCS[location], n = NEW_LOCS[location]
-  if (!o || !n) return pos
-  const relX = Math.max(0.12, Math.min(0.88, (pos.x - o.x) / o.w))
-  const relY = Math.max(0.18, Math.min(0.82, (pos.y - o.y) / o.h))
-  return { x: Math.round(n.x + relX * n.w), y: Math.round(n.y + relY * n.h) }
-}
 
 interface AgentSummary {
   id: string
@@ -94,9 +70,6 @@ interface SimulationStore {
   dramaAlerts: DramaAlert[]
   isConnected: boolean
 
-  // Full agent data (fetched on demand)
-  fullAgents: Map<string, Agent>
-
   // Event overlays
   activeTokShow: TokShowData | null
   activeEviction: EvictionData | null
@@ -109,12 +82,17 @@ interface SimulationStore {
   handleSSEEvent: (event: SSEEvent) => void
   setSelectedAgent: (id: string | null) => void
   setConnected: (connected: boolean) => void
-  setFullAgent: (agent: Agent) => void
   clearEviction: () => void
   clearConfessional: () => void
 }
 
+function computeFacing(aPos: { x: number; y: number }, bPos: { x: number; y: number }): 'left' | 'right' {
+  return aPos.x > bPos.x ? 'left' : 'right'
+}
+
 let msgCounter = 0
+let tokShowTimer: ReturnType<typeof setTimeout> | null = null
+let confessionalTimer: ReturnType<typeof setTimeout> | null = null
 
 export const useSimulationStore = create<SimulationStore>((set, get) => ({
   agents: [],
@@ -124,7 +102,6 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   chatMessages: [],
   dramaAlerts: [],
   isConnected: false,
-  fullAgents: new Map(),
   activeTokShow: null,
   activeEviction: null,
   activeConfessional: null,
@@ -187,10 +164,9 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           )
           if (partners.length > 0) {
             const partner = partners[0]
-            const aPos = storeRemapPosition(agent.location, agent.position)
-            const pPos = storeRemapPosition(partner.location, partner.position)
-            const facing = aPos.x > pPos.x ? 'left' : 'right'
-            animStore.setFacingOverride(agent.id, facing)
+            const aPos = remapPosition(agent.location, agent.position)
+            const pPos = remapPosition(partner.location, partner.position)
+            animStore.setFacingOverride(agent.id, computeFacing(aPos, pPos))
           }
         }
         break
@@ -264,12 +240,10 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           const speakerAgent = agents.find(a => a.id === data.speakerId)
           const targetAgent = agents.find(a => a.id === partnerId)
           if (speakerAgent && targetAgent) {
-            const sPos = storeRemapPosition(speakerAgent.location, speakerAgent.position)
-            const tPos = storeRemapPosition(targetAgent.location, targetAgent.position)
-            const sFacing: 'left' | 'right' = sPos.x > tPos.x ? 'left' : 'right'
-            const tFacing: 'left' | 'right' = sFacing === 'left' ? 'right' : 'left'
-            animStore.setFacingOverride(data.speakerId, sFacing)
-            animStore.setFacingOverride(partnerId, tFacing)
+            const sPos = remapPosition(speakerAgent.location, speakerAgent.position)
+            const tPos = remapPosition(targetAgent.location, targetAgent.position)
+            animStore.setFacingOverride(data.speakerId, computeFacing(sPos, tPos))
+            animStore.setFacingOverride(partnerId, computeFacing(tPos, sPos))
           }
         }
         break
@@ -297,8 +271,8 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
         const currentAgent = get().agents.find(a => a.id === data.agentId)
         if (currentAgent) {
           // Compute walking path from current position to new position
-          const fromPos = storeRemapPosition(currentAgent.location, currentAgent.position)
-          const toPos = storeRemapPosition(data.location, data.position)
+          const fromPos = remapPosition(currentAgent.location, currentAgent.position)
+          const toPos = remapPosition(data.location, data.position)
           const path = findPath(currentAgent.location, fromPos, data.location, toPos)
 
           // Start walking animation
@@ -364,21 +338,29 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
               statements: data.statements as Array<{ agentId: string; name: string; text: string }>,
             },
           })
-          // Auto-clear after 40 seconds
-          setTimeout(() => set({ activeTokShow: null }), 40000)
+          if (tokShowTimer) clearTimeout(tokShowTimer)
+          tokShowTimer = setTimeout(() => set({ activeTokShow: null }), 40000)
         }
 
         // Confessional overlay
         if (data.eventType === 'confessional' && data.agentName) {
+          const confData = data as {
+            eventType: string
+            agentId: string
+            agentName: string
+            text?: string
+            emotion?: string
+          }
           set({
             activeConfessional: {
-              agentId: (data.agentId as string) ?? '',
-              name: (data.agentName as string) ?? '',
-              text: (data.text as string) ?? 'Мысли вслух...',
-              emotion: data.emotion as string | undefined,
+              agentId: confData.agentId ?? '',
+              name: confData.agentName ?? '',
+              text: confData.text ?? 'Мысли вслух...',
+              emotion: confData.emotion,
             },
           })
-          setTimeout(() => set({ activeConfessional: null }), 15000)
+          if (confessionalTimer) clearTimeout(confessionalTimer)
+          confessionalTimer = setTimeout(() => set({ activeConfessional: null }), 15000)
         }
         break
       }
@@ -405,11 +387,6 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   setSelectedAgent: (id) => set({ selectedAgentId: id }),
   setConnected: (connected) => set({ isConnected: connected }),
-  setFullAgent: (agent) => set(state => {
-    const map = new Map(state.fullAgents)
-    map.set(agent.id, agent)
-    return { fullAgents: map }
-  }),
   clearEviction: () => set({ activeEviction: null }),
   clearConfessional: () => set({ activeConfessional: null }),
 }))

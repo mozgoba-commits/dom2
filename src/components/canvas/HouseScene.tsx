@@ -6,11 +6,12 @@ import { useViewStore } from '../../store/viewStore'
 import { useWalkingStore } from '../../store/walkingStore'
 import { useAnimationStore } from '../../store/animationStore'
 import type { LocationId } from '../../engine/types'
+import { remapPosition } from '../../engine/coordinates'
 import { drawCharacter } from './drawCharacter'
 import { drawEnvironment } from './drawEnvironment'
 import { getAppearance } from './spriteConfig'
 import { emitParticles, tickParticles, drawParticles } from './particleSystem'
-import { clampToWalkable } from './collisionMap'
+import { clampToWalkable } from '../../engine/collisionMap'
 
 // ─── Layout constants (exported for SpeechBubbles) ──────────
 
@@ -25,35 +26,6 @@ export const LOCATIONS: Record<LocationId, { x: number; y: number; w: number; h:
   kitchen:      { x: 320, y: 133, w: 160, h: 147, label: 'Кухня',         color: '#c4a35a' },
   bathroom:     { x: 0,   y: 283, w: 157, h: 77,  label: 'Ванная',        color: '#2a4a5a' },
   confessional: { x: 160, y: 283, w: 157, h: 77,  label: 'Конфессионная',  color: '#3a1a1a' },
-}
-
-// Old layout bases (server sends positions in this coordinate space)
-const OLD_LOCATIONS: Record<LocationId, { x: number; y: number; w: number; h: number }> = {
-  yard:         { x: 0,   y: 0,   w: 320, h: 90  },
-  bedroom:      { x: 0,   y: 90,  w: 100, h: 100 },
-  living_room:  { x: 100, y: 90,  w: 120, h: 100 },
-  kitchen:      { x: 220, y: 90,  w: 100, h: 100 },
-  bathroom:     { x: 0,   y: 190, w: 100, h: 50  },
-  confessional: { x: 100, y: 190, w: 120, h: 50  },
-}
-
-// Map server positions to new layout
-export function remapPosition(
-  location: LocationId,
-  pos: { x: number; y: number },
-): { x: number; y: number } {
-  const oldLoc = OLD_LOCATIONS[location]
-  const newLoc = LOCATIONS[location]
-  if (!oldLoc || !newLoc) return pos
-
-  // Relative position in old room (0–1), clamped
-  const relX = Math.max(0.12, Math.min(0.88, (pos.x - oldLoc.x) / oldLoc.w))
-  const relY = Math.max(0.18, Math.min(0.82, (pos.y - oldLoc.y) / oldLoc.h))
-
-  return {
-    x: Math.round(newLoc.x + relX * newLoc.w),
-    y: Math.round(newLoc.y + relY * newLoc.h),
-  }
 }
 
 // ─── Component ───────────────────────────────────────────────
@@ -103,27 +75,31 @@ export default function HouseScene() {
     // Night character glow
     const isNight = clock?.timeOfDay === 'night'
 
-    // Draw agents (sorted by Y for z-order)
-    const getAgentPos = (agent: typeof agents[0]) => {
-      const walkPos = walkingStore.getState().getPosition(agent.id)
-      if (walkPos) return walkPos
-      const remapped = remapPosition(agent.location, agent.position)
-      return clampToWalkable(agent.location, remapped.x, remapped.y)
+    // Cache agent positions (computed once, reused for sort + draw + auras)
+    const ws = walkingStore.getState()
+    const as = animationStore.getState()
+    const positionCache = new Map<string, { x: number; y: number }>()
+    for (const agent of agents) {
+      const walkPos = ws.getPosition(agent.id)
+      if (walkPos) {
+        positionCache.set(agent.id, walkPos)
+      } else {
+        const remapped = remapPosition(agent.location, agent.position)
+        positionCache.set(agent.id, clampToWalkable(agent.location, remapped.x, remapped.y))
+      }
     }
 
     const sortedAgents = [...agents].sort((a, b) => {
-      return getAgentPos(a).y - getAgentPos(b).y
+      return positionCache.get(a.id)!.y - positionCache.get(b.id)!.y
     })
 
     // Collect paired agents for interaction auras
     const pairedAgents: Array<{ a: typeof agents[0]; b: typeof agents[0]; state: string }> = []
 
     for (const agent of sortedAgents) {
-      const pos = getAgentPos(agent)
+      const pos = positionCache.get(agent.id)!
       const appearance = getAppearance(agent.name)
       const isSelected = agent.id === selectedAgentId
-      const ws = walkingStore.getState()
-      const as = animationStore.getState()
       const anim = as.getAnimation(agent.id)
       const walking = ws.isWalking(agent.id)
       const walkFrame = walking ? ws.getWalkFrame(agent.id) : undefined
@@ -165,8 +141,8 @@ export default function HouseScene() {
 
     // Draw interaction auras between paired agents
     for (const pair of pairedAgents) {
-      const posA = getAgentPos(pair.a)
-      const posB = getAgentPos(pair.b)
+      const posA = positionCache.get(pair.a.id)!
+      const posB = positionCache.get(pair.b.id)!
       const midX = (posA.x + posB.x) / 2
       const midY = (posA.y + posB.y) / 2
       const dist = Math.sqrt((posA.x - posB.x) ** 2 + (posA.y - posB.y) ** 2)

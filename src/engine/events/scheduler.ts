@@ -118,10 +118,6 @@ export class EventScheduler {
     return newEvents
   }
 
-  scheduleEvent(type: GameEventType, tick: number, location: LocationId, agents: string[]): GameEvent {
-    return this.createEvent(type, tick, location, agents)
-  }
-
   private createEvent(
     type: GameEventType,
     scheduledTick: number,

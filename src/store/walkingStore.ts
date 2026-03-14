@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { Waypoint } from '../engine/pathfinding'
-import { getRoomAt, resolveWalkingCollision } from '../components/canvas/collisionMap'
+import { getRoomAt, resolveWalkingCollision } from '../engine/collisionMap'
 
 interface WalkingAgent {
   agentId: string

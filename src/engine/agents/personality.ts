@@ -28,7 +28,7 @@ export function applyEmotionalContagion(agent: Agent, nearbyAgents: Agent[]): Em
     }
   }
 
-  emotions.currentMood = calculateMoodPublic(emotions)
+  emotions.currentMood = calculateMood(emotions)
   return emotions
 }
 
@@ -48,25 +48,6 @@ export function calculateStressLevel(agent: Agent): number {
   return Math.min(100, Math.max(0,
     (100 - avgNeeds) * 0.3 + maxNegativeEmotion * 0.4 + energyPenalty
   ))
-}
-
-function calculateMoodPublic(e: EmotionalState): Mood {
-  const dominant = [
-    { mood: 'angry' as Mood, val: e.anger },
-    { mood: 'happy' as Mood, val: e.happiness },
-    { mood: 'sad' as Mood, val: e.sadness },
-    { mood: 'excited' as Mood, val: e.excitement },
-    { mood: 'jealous' as Mood, val: e.jealousy },
-    { mood: 'flirty' as Mood, val: e.love > 60 ? e.love : 0 },
-    { mood: 'anxious' as Mood, val: e.fear },
-  ]
-  const strongest = dominant.reduce((a, b) => a.val > b.val ? a : b)
-  if (strongest.val < 30) return 'neutral'
-  if (strongest.val > 80) {
-    if (strongest.mood === 'happy') return 'euphoric'
-    if (strongest.mood === 'sad') return 'devastated'
-  }
-  return strongest.mood
 }
 
 // --- Need Decay Rates (per tick) ---

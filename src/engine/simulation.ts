@@ -21,6 +21,17 @@ import { runTokShow } from './events/tokShow'
 import { calculateImportance } from './memory/importance'
 import { generateReflection } from './memory/reflectionEngine'
 import { generateDayPlan } from './agents/planner'
+import { OLD_ROOM_BOUNDS } from './coordinates'
+
+// --- Constants ---
+const TICK_INTERVAL_MS = 5000
+const BATHROOM_CHANCE = 0.15
+const IDLE_WANDER_CHANCE = 0.4
+const WANDER_TICK_INTERVAL = 3
+const ALERT_DEDUP_WINDOW = 30
+const ALERT_CLEANUP_INTERVAL = 60
+const REFLECTION_INTERVAL = 30
+const MAX_REFLECTIONS_PER_TICK = 2
 
 export type SimulationEventHandler = (event: SSEEvent) => void
 
@@ -77,7 +88,7 @@ export class Simulation {
     }
   }
 
-  start(tickIntervalMs = 5000) {
+  start(tickIntervalMs = TICK_INTERVAL_MS) {
     if (this.state.isRunning) return
     this.state.isRunning = true
     console.log(`[Simulation] Started. Tick every ${tickIntervalMs}ms`)
@@ -226,13 +237,12 @@ export class Simulation {
     }
 
     // 8b. Idle wandering — free agents occasionally shift within their room
-    if (tick % 3 === 0) { // every 3 ticks (~30 game minutes)
+    if (tick % WANDER_TICK_INTERVAL === 0) {
       for (const agent of state.agents) {
         if (agent.isEvicted || agent.status !== 'free') continue
-        if (Math.random() > 0.4) continue // 40% chance per eligible tick
+        if (Math.random() > IDLE_WANDER_CHANCE) continue
 
-        // 15% chance to go to bathroom
-        if (Math.random() < 0.15 && agent.location !== 'bathroom') {
+        if (Math.random() < BATHROOM_CHANCE && agent.location !== 'bathroom') {
           agent.location = 'bathroom'
           agent.position = randomLocationPosition('bathroom')
           this.emit({
@@ -335,28 +345,28 @@ export class Simulation {
     const alerts = getDramaAlerts(state.agents, this.relationshipGraph)
     for (const alert of alerts) {
       const lastSent = this.recentAlerts.get(alert) ?? 0
-      if (tick - lastSent >= 30) {
+      if (tick - lastSent >= ALERT_DEDUP_WINDOW) {
         this.emit({ type: 'drama_alert', data: { message: alert }, tick })
         this.recentAlerts.set(alert, tick)
       }
     }
     // Clean old entries
-    if (tick % 60 === 0) {
+    if (tick % ALERT_CLEANUP_INTERVAL === 0) {
       for (const [key, t] of this.recentAlerts) {
-        if (tick - t > 60) this.recentAlerts.delete(key)
+        if (tick - t > ALERT_CLEANUP_INTERVAL) this.recentAlerts.delete(key)
       }
     }
 
     // 10b. Reflections — every 30 ticks, 1-2 agents synthesize insights
-    if (tick - this.lastReflectionTick >= 30 && this.useLLM) {
+    if (tick - this.lastReflectionTick >= REFLECTION_INTERVAL && this.useLLM) {
       this.lastReflectionTick = tick
       const activeAgents = state.agents.filter(a => !a.isEvicted)
-      const count = Math.min(2, activeAgents.length)
+      const count = Math.min(MAX_REFLECTIONS_PER_TICK, activeAgents.length)
       for (let i = 0; i < count; i++) {
         const agentIdx = (this.reflectionRotation + i) % activeAgents.length
         const agent = activeAgents[agentIdx]
         // Run async without blocking tick
-        generateReflection(agent, this.memoryStore, tick - 30, state.agents, tick)
+        generateReflection(agent, this.memoryStore, tick - REFLECTION_INTERVAL, state.agents, tick)
           .catch(err => console.warn(`[Reflection] Error for ${agent.bio.name}:`, err))
       }
       this.reflectionRotation = (this.reflectionRotation + count) % Math.max(1, activeAgents.length)
@@ -704,16 +714,6 @@ export class Simulation {
   getVotingSession() {
     return this.votingEngine.getActiveSession()
   }
-}
-
-// Old-coordinate-space room bounds (server sends positions in this space)
-const OLD_ROOM_BOUNDS: Record<LocationId, { x: number; y: number; w: number; h: number }> = {
-  yard:         { x: 10,  y: 10,  w: 300, h: 70  },
-  bedroom:      { x: 10,  y: 100, w: 80,  h: 80  },
-  living_room:  { x: 110, y: 100, w: 100, h: 80  },
-  kitchen:      { x: 230, y: 100, w: 80,  h: 80  },
-  bathroom:     { x: 10,  y: 195, w: 80,  h: 40  },
-  confessional: { x: 110, y: 195, w: 100, h: 40  },
 }
 
 /** Generate a spread-out position within a room (OLD server coordinate space).

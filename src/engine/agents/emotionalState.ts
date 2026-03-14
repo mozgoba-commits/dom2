@@ -13,10 +13,6 @@ export function createDefaultEmotions(): EmotionalState {
   }
 }
 
-export function emotionToLabel(mood: Mood): string {
-  return moodToRussian(mood)
-}
-
 export function moodToRussian(mood: Mood): string {
   const map: Record<Mood, string> = {
     happy: 'Весёлый',

@@ -1,7 +1,7 @@
 // Collision map for character movement in native 480×360 canvas coordinates
 // Characters use (cx, cy) where cy = feet bottom. Character half-width ~6px.
 
-import type { LocationId } from '../../engine/types'
+import type { LocationId } from './types'
 
 interface Rect { x: number; y: number; w: number; h: number }
 

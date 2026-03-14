@@ -108,10 +108,6 @@ export function getBestGossipTarget(
   return null
 }
 
-export function getActiveGossip(): GossipItem[] {
-  return [...gossipItems.values()]
-}
-
 export function getGossipAbout(agentId: string): GossipItem[] {
   return [...gossipItems.values()].filter(g => g.aboutAgentIds.includes(agentId))
 }

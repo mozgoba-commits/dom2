@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSimulationStore } from '../../store/simulationStore'
 import { getAccentColor } from './spriteConfig'
-import { SCALE, remapPosition } from './HouseScene'
+import { SCALE } from './HouseScene'
+import { remapPosition } from '../../engine/coordinates'
 
 interface VisibleBubble {
   messageId: string
