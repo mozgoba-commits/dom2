@@ -6,15 +6,27 @@ import { getAccentColor } from '../canvas/spriteConfig'
 
 const LOC_LABELS: Record<string, string> = {
   yard: 'Поляна', bedroom: 'Спальня', living_room: 'Гостиная',
-  kitchen: 'Кухня', confessional: 'Конфессионная',
+  kitchen: 'Кухня', bathroom: 'Ванная', confessional: 'Конфессионная',
 }
 
 const LOC_DOT_COLORS: Record<string, string> = {
   yard: 'bg-green-500', bedroom: 'bg-purple-500', living_room: 'bg-amber-600',
-  kitchen: 'bg-yellow-500', confessional: 'bg-red-700',
+  kitchen: 'bg-yellow-500', bathroom: 'bg-cyan-600', confessional: 'bg-red-700',
 }
 
-type FilterTab = 'all' | 'drama' | 'romance' | 'conflicts'
+type FilterTab = 'all' | 'highlights' | 'drama' | 'romance' | 'conflicts'
+
+// Score a message for "highlight" worthiness (higher = more interesting)
+function highlightScore(content: string, emotion: string): number {
+  let score = 0
+  if (['angry', 'jealous', 'devastated', 'scheming'].includes(emotion)) score += 3
+  if (['flirty', 'euphoric'].includes(emotion)) score += 2
+  if (/люблю|ненавижу|предатель|врёшь|поцелу|ударил|кричит|плачет|целую|уходи/i.test(content)) score += 4
+  if (/прости|извини|боюсь|признаюсь|тайна|секрет/i.test(content)) score += 3
+  if (content.includes('!') && content.includes('?')) score += 1
+  if (content.length > 80) score += 1
+  return score
+}
 
 export default function ChatPanel() {
   const chatMessages = useSimulationStore(s => s.chatMessages)
@@ -59,13 +71,23 @@ export default function ChatPanel() {
     const msgs = chatMessages.slice(-80)
     const alerts = dramaAlerts.slice(-20)
 
-    // Apply filter
-    const filtered = filter === 'all' ? msgs : msgs.filter(m => {
-      if (filter === 'drama') return ['angry', 'jealous', 'devastated', 'annoyed', 'scheming'].includes(m.emotion)
-      if (filter === 'romance') return ['flirty', 'excited'].includes(m.emotion) || (m.action && /флирт|обним|целу|поцел|любл/i.test(m.action))
-      if (filter === 'conflicts') return ['angry', 'annoyed'].includes(m.emotion) || (m.action && /спор|руга|удар|конфронт|крич/i.test(m.action))
-      return true
-    })
+    // If agent is selected, filter to their conversations first
+    let filtered = selectedAgentId
+      ? msgs.filter(m => m.speakerId === selectedAgentId ||
+          (m.conversationId && msgs.some(o => o.conversationId === m.conversationId && o.speakerId === selectedAgentId)))
+      : msgs
+
+    // Apply category filter
+    if (filter === 'highlights') {
+      filtered = filtered.filter(m => highlightScore(m.content, m.emotion) >= 3)
+    } else if (filter !== 'all') {
+      filtered = filtered.filter(m => {
+        if (filter === 'drama') return ['angry', 'jealous', 'devastated', 'annoyed', 'scheming'].includes(m.emotion)
+        if (filter === 'romance') return ['flirty', 'excited'].includes(m.emotion) || (m.action && /флирт|обним|целу|поцел|любл/i.test(m.action))
+        if (filter === 'conflicts') return ['angry', 'annoyed'].includes(m.emotion) || (m.action && /спор|руга|удар|конфронт|крич/i.test(m.action))
+        return true
+      })
+    }
 
     // Group by conversationId
     type Item =
@@ -96,7 +118,7 @@ export default function ChatPanel() {
 
     result.sort((a, b) => a.tick - b.tick)
     return result.slice(-40)
-  }, [chatMessages, dramaAlerts, filter])
+  }, [chatMessages, dramaAlerts, filter, selectedAgentId])
 
   return (
     <div className="flex flex-col h-full bg-gray-900 border-l border-gray-700">
@@ -110,6 +132,7 @@ export default function ChatPanel() {
       <div className="flex gap-1 px-2 py-1.5 border-b border-gray-800 bg-gray-900">
         {([
           ['all', 'Все'],
+          ['highlights', 'Топ'],
           ['drama', 'Драма'],
           ['romance', 'Романт.'],
           ['conflicts', 'Конфл.'],
@@ -170,10 +193,31 @@ export default function ChatPanel() {
         </div>
       </div>
 
+      {/* Selected agent indicator */}
+      {selectedAgentId && (() => {
+        const a = agents.find(ag => ag.id === selectedAgentId)
+        return a ? (
+          <div className="flex items-center justify-between px-2 py-1 bg-gray-800 border-b border-gray-700">
+            <span className="text-[10px] text-gray-300">
+              <span style={{ color: getAccentColor(a.name) }} className="font-semibold">{a.name}</span>
+              <span className="text-gray-500 ml-1">— диалоги</span>
+            </span>
+            <button
+              onClick={() => setSelectedAgent(null)}
+              className="text-[10px] text-gray-500 hover:text-gray-300"
+            >
+              Показать всех
+            </button>
+          </div>
+        ) : null
+      })()}
+
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
         {items.length === 0 && (
-          <p className="text-gray-600 text-xs text-center mt-8">Ожидание сообщений...</p>
+          <p className="text-gray-600 text-xs text-center mt-8">
+            {selectedAgentId ? 'Нет диалогов у этого участника' : 'Ожидание сообщений...'}
+          </p>
         )}
 
         {items.map((item, idx) => {
@@ -181,6 +225,7 @@ export default function ChatPanel() {
             return (
               <div key={item.id} className="text-center py-0.5">
                 <span className="text-[10px] bg-yellow-900/40 text-yellow-400 px-2 py-0.5 rounded-full">
+                  <span className="text-yellow-600 font-mono mr-1">{tickToTime(item.tick)}</span>
                   {item.message}
                 </span>
               </div>
@@ -213,6 +258,7 @@ export default function ChatPanel() {
               }`}
             >
               <span className="inline-flex items-center gap-1">
+                <span className="text-gray-600 font-mono text-[10px]">{tickToTime(msg.tick)}</span>
                 <Dot color={accent} />
                 <button
                   onClick={() => setSelectedAgent(msg.speakerId)}
@@ -226,11 +272,8 @@ export default function ChatPanel() {
                   {LOC_LABELS[msg.location]}
                 </span>
               </span>
-              {msg.action && (
-                <span className="text-gray-500 italic text-[11px] ml-1">*{msg.action}*</span>
-              )}
               <p className="text-gray-300 ml-4 leading-snug">
-                {cleanContent(msg.content, msg.action)}
+                {cleanContent(msg.content)}
               </p>
             </div>
           )
@@ -257,9 +300,12 @@ function ConvoBlock({
   const participants = [...new Set(msgs.map(m => m.speakerName))]
   const location = msgs[0]?.location || ''
   const isRelevant = selectedAgentId && msgs.some(m => m.speakerId === selectedAgentId)
+  const maxScore = Math.max(...msgs.map(m => highlightScore(m.content, m.emotion)))
+  const isHighlight = maxScore >= 4
 
   return (
     <div className={`rounded border-l-2 px-2 py-1.5 ${
+      isHighlight ? 'border-l-red-500 bg-red-950/20' :
       isRelevant ? 'border-l-white bg-gray-800/70' : 'border-l-gray-700 bg-gray-800/30'
     }`}>
       {/* Header: time + location + participants */}
@@ -281,9 +327,6 @@ function ConvoBlock({
         const accent = getAccentColor(msg.speakerName)
         return (
           <div key={msg.id} className="text-[12px] leading-snug py-0.5">
-            {msg.action && (
-              <span className="text-gray-600 italic text-[10px]">*{msg.action}* </span>
-            )}
             <button
               onClick={() => onSelect(msg.speakerId)}
               className="font-semibold hover:underline"
@@ -292,7 +335,7 @@ function ConvoBlock({
               {msg.speakerName}:
             </button>
             <span className="text-gray-300 ml-1">
-              {cleanContent(msg.content, msg.action)}
+              {cleanContent(msg.content)}
             </span>
           </div>
         )
@@ -312,12 +355,9 @@ function Dot({ color }: { color: string }) {
   )
 }
 
-function cleanContent(content: string, action?: string): string {
-  if (action) {
-    const escaped = action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    content = content.replace(new RegExp(`^\\*${escaped}\\*\\s*`), '')
-  }
-  return content.replace(/^\*[^*]+\*\s*/, '')
+function cleanContent(content: string): string {
+  // Strip ALL asterisk descriptions like *закатывает глаза*
+  return content.replace(/\*[^*]+\*/g, '').replace(/\s{2,}/g, ' ').trim()
 }
 
 function tickToTime(tick: number): string {

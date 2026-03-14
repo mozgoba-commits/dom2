@@ -20,7 +20,7 @@ const MOOD_RU: Record<string, string> = {
 
 const LOCATION_RU: Record<string, string> = {
   yard: 'Поляна', bedroom: 'Спальня', living_room: 'Гостиная',
-  kitchen: 'Кухня', confessional: 'Конфессионная',
+  kitchen: 'Кухня', bathroom: 'Ванная', confessional: 'Конфессионная',
 }
 
 interface AgentData {

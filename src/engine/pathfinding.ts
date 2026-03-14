@@ -11,12 +11,13 @@ const DOORS: Array<{ from: LocationId; to: LocationId; waypoint: Waypoint }> = [
   { from: 'yard', to: 'kitchen', waypoint: { x: 400, y: 131 } },
   { from: 'bedroom', to: 'living_room', waypoint: { x: 158, y: 206 } },
   { from: 'living_room', to: 'kitchen', waypoint: { x: 318, y: 206 } },
+  { from: 'bedroom', to: 'bathroom', waypoint: { x: 78, y: 281 } },
   { from: 'living_room', to: 'confessional', waypoint: { x: 238, y: 281 } },
 ]
 
 // Build adjacency graph
 const ADJACENCY: Record<LocationId, Array<{ neighbor: LocationId; door: Waypoint }>> = {
-  yard: [], bedroom: [], living_room: [], kitchen: [], confessional: [],
+  yard: [], bedroom: [], living_room: [], kitchen: [], bathroom: [], confessional: [],
 }
 for (const d of DOORS) {
   ADJACENCY[d.from].push({ neighbor: d.to, door: d.waypoint })

@@ -1,5 +1,74 @@
 import { Agent, AgentNeeds, EmotionalState, Mood } from '../types'
 
+// --- Emotional Contagion ---
+
+const CONTAGION_MULTIPLIERS: Record<string, number> = {
+  anger: 1.5,
+  excitement: 1.2,
+  sadness: 1.0,
+  fear: 1.1,
+  happiness: 0.8,
+  jealousy: 0.6,
+  love: 0.3,
+}
+
+export function applyEmotionalContagion(agent: Agent, nearbyAgents: Agent[]): EmotionalState {
+  let emotions = { ...agent.emotions }
+  const sensitivity = agent.traits.sensitivity / 100
+
+  for (const other of nearbyAgents) {
+    if (other.id === agent.id) continue
+    for (const [key, multiplier] of Object.entries(CONTAGION_MULTIPLIERS)) {
+      const k = key as keyof Omit<EmotionalState, 'currentMood'>
+      const otherVal = other.emotions[k] as number
+      if (otherVal > 60) {
+        const contagion = (otherVal / 100) * sensitivity * 10 * multiplier
+        emotions[k] = Math.min(100, (emotions[k] as number) + contagion)
+      }
+    }
+  }
+
+  emotions.currentMood = calculateMoodPublic(emotions)
+  return emotions
+}
+
+// --- Stress Level ---
+
+export function calculateStressLevel(agent: Agent): number {
+  const needs = agent.needs
+  const avgNeeds = (needs.socialNeed + needs.validationNeed + needs.intimacyNeed + needs.dominanceNeed) / 4
+  const maxNegativeEmotion = Math.max(
+    agent.emotions.anger,
+    agent.emotions.sadness,
+    agent.emotions.fear,
+    agent.emotions.jealousy
+  )
+  const energyPenalty = agent.energy < 30 ? 20 : 0
+
+  return Math.min(100, Math.max(0,
+    (100 - avgNeeds) * 0.3 + maxNegativeEmotion * 0.4 + energyPenalty
+  ))
+}
+
+function calculateMoodPublic(e: EmotionalState): Mood {
+  const dominant = [
+    { mood: 'angry' as Mood, val: e.anger },
+    { mood: 'happy' as Mood, val: e.happiness },
+    { mood: 'sad' as Mood, val: e.sadness },
+    { mood: 'excited' as Mood, val: e.excitement },
+    { mood: 'jealous' as Mood, val: e.jealousy },
+    { mood: 'flirty' as Mood, val: e.love > 60 ? e.love : 0 },
+    { mood: 'anxious' as Mood, val: e.fear },
+  ]
+  const strongest = dominant.reduce((a, b) => a.val > b.val ? a : b)
+  if (strongest.val < 30) return 'neutral'
+  if (strongest.val > 80) {
+    if (strongest.mood === 'happy') return 'euphoric'
+    if (strongest.mood === 'sad') return 'devastated'
+  }
+  return strongest.mood
+}
+
 // --- Need Decay Rates (per tick) ---
 
 export function decayNeeds(agent: Agent): AgentNeeds {

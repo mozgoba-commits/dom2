@@ -136,4 +136,21 @@ export class MemoryStore {
       ...(this.longTerm.get(agentId) ?? []),
     ]
   }
+
+  getReflections(agentId: string, count = 5): Memory[] {
+    const all = this.getAllMemories(agentId)
+    return all
+      .filter(m => m.type === 'reflection')
+      .sort((a, b) => b.tick - a.tick)
+      .slice(0, count)
+  }
+
+  getMemoriesSince(agentId: string, sinceTick: number): Memory[] {
+    const all = this.getAllMemories(agentId)
+    const unique = new Map<string, Memory>()
+    for (const m of all) {
+      if (m.tick >= sinceTick) unique.set(m.id, m)
+    }
+    return [...unique.values()].sort((a, b) => a.tick - b.tick)
+  }
 }

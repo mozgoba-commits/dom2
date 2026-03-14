@@ -22,6 +22,7 @@ export function drawEnvironment(
   drawBedroom(ctx, locations.bedroom, tod, h)
   drawLivingRoom(ctx, locations.living_room, tod, h)
   drawKitchen(ctx, locations.kitchen)
+  drawBathroom(ctx, locations.bathroom)
   drawConfessional(ctx, locations.confessional)
 
   // Draw walls between rooms
@@ -366,16 +367,31 @@ function drawKitchen(ctx: CanvasRenderingContext2D, r: RoomDef) {
   px(ctx, r.x, r.y, r.w, 3, '#d4b36a')
   px(ctx, r.x, r.y + 3, r.w, 1, '#c4a35a')
 
-  // Counter + cabinets along top wall
+  // Counter + cabinets along top wall (gap in middle for door)
   const counterY = r.y + 6
-  px(ctx, r.x + 4, counterY, r.w - 8, 16, '#5c4a32') // counter base
-  px(ctx, r.x + 4, counterY, r.w - 8, 2, '#6b5a42')  // counter top
-  // Cabinet doors
-  for (let c = 0; c < Math.floor((r.w - 16) / 18); c++) {
+  const doorGapLeft = r.x + r.w / 2 - 8  // gap from ~center-8 to center+8
+  const doorGapRight = r.x + r.w / 2 + 8
+  // Left counter
+  px(ctx, r.x + 4, counterY, doorGapLeft - (r.x + 4), 16, '#5c4a32')
+  px(ctx, r.x + 4, counterY, doorGapLeft - (r.x + 4), 2, '#6b5a42')
+  // Right counter
+  px(ctx, doorGapRight, counterY, r.x + r.w - 4 - doorGapRight, 16, '#5c4a32')
+  px(ctx, doorGapRight, counterY, r.x + r.w - 4 - doorGapRight, 2, '#6b5a42')
+  // Cabinet doors (left side)
+  for (let c = 0; c < 2; c++) {
     const cx = r.x + 8 + c * 18
+    if (cx + 14 > doorGapLeft) break
     px(ctx, cx, counterY + 3, 14, 11, '#4a3a22')
     px(ctx, cx + 1, counterY + 4, 12, 9, '#5a4a32')
-    px(ctx, cx + 6, counterY + 7, 2, 2, '#8b7355') // handle
+    px(ctx, cx + 6, counterY + 7, 2, 2, '#8b7355')
+  }
+  // Cabinet doors (right side)
+  for (let c = 0; c < 2; c++) {
+    const cx = doorGapRight + 4 + c * 18
+    if (cx + 14 > r.x + r.w - 4) break
+    px(ctx, cx, counterY + 3, 14, 11, '#4a3a22')
+    px(ctx, cx + 1, counterY + 4, 12, 9, '#5a4a32')
+    px(ctx, cx + 6, counterY + 7, 2, 2, '#8b7355')
   }
 
   // Fridge (left side of counter)
@@ -426,6 +442,53 @@ function drawKitchen(ctx: CanvasRenderingContext2D, r: RoomDef) {
 function drawChair(ctx: CanvasRenderingContext2D, x: number, y: number) {
   px(ctx, x, y, 6, 6, '#4a3a2a')
   px(ctx, x + 1, y + 1, 4, 4, '#5a4a3a')
+}
+
+// ─── Bathroom ────────────────────────────────────────────
+
+function drawBathroom(ctx: CanvasRenderingContext2D, r: RoomDef) {
+  // Light tile floor
+  tiledFloor(ctx, r.x, r.y, r.w, r.h, '#2a4a5a', '#254458', 4)
+
+  // Top wall depth
+  px(ctx, r.x, r.y, r.w, 3, '#3a5a6a')
+  px(ctx, r.x, r.y + 3, r.w, 1, '#2a4a5a')
+
+  // Bathtub (top-left)
+  px(ctx, r.x + 6, r.y + 8, 36, 18, '#ddeeff')
+  px(ctx, r.x + 7, r.y + 9, 34, 16, '#bbddee')
+  px(ctx, r.x + 8, r.y + 10, 32, 14, '#99ccdd') // water
+  // Faucet
+  px(ctx, r.x + 8, r.y + 8, 4, 2, '#999999')
+  px(ctx, r.x + 9, r.y + 6, 2, 3, '#aaaaaa')
+
+  // Toilet (bottom-right)
+  const toiletX = r.x + r.w - 30
+  const toiletY = r.y + r.h - 22
+  px(ctx, toiletX, toiletY, 14, 16, '#eeeeff')
+  px(ctx, toiletX + 1, toiletY + 1, 12, 14, '#ddddef')
+  px(ctx, toiletX + 3, toiletY - 2, 8, 4, '#eeeeff') // tank
+  px(ctx, toiletX + 5, toiletY + 3, 4, 6, '#ccccdd') // bowl
+
+  // Sink + mirror (top-right)
+  const sinkX = r.x + r.w - 30
+  const sinkY = r.y + 8
+  px(ctx, sinkX, sinkY, 16, 10, '#ddddee') // sink basin
+  px(ctx, sinkX + 1, sinkY + 1, 14, 8, '#ccccdd')
+  px(ctx, sinkX + 6, sinkY + 3, 4, 3, '#88bbcc') // water
+  px(ctx, sinkX + 7, sinkY, 2, 2, '#999999') // faucet
+  // Mirror
+  px(ctx, sinkX + 2, sinkY - 6, 12, 6, '#445566')
+  px(ctx, sinkX + 3, sinkY - 5, 10, 4, '#667788')
+
+  // Bath mat
+  px(ctx, r.x + r.w / 2 - 8, r.y + r.h / 2, 16, 8, '#5577aa')
+  px(ctx, r.x + r.w / 2 - 7, r.y + r.h / 2 + 1, 14, 6, '#6688bb')
+
+  // Towel rack on left wall
+  px(ctx, r.x + 2, r.y + r.h / 2 - 4, 3, 12, '#888888')
+  px(ctx, r.x + 1, r.y + r.h / 2 - 2, 4, 3, '#bb8844') // towel
+  px(ctx, r.x + 1, r.y + r.h / 2 + 2, 4, 3, '#44aa88') // towel
 }
 
 // ─── Confessional ────────────────────────────────────────────
@@ -520,20 +583,25 @@ function drawWalls(ctx: CanvasRenderingContext2D, locs: Locations) {
   // Door
   px(ctx, vert2X - wallW, locs.kitchen.y + locs.kitchen.h / 2 - 5, wallW, 10, doorColor)
 
-  // Wall between living room/kitchen and confessional
-  const confTop = locs.confessional.y
-  // Left part (under bedroom)
-  px(ctx, 0, confTop - wallW, locs.confessional.x, wallW, wallDark)
-  px(ctx, 0, confTop - wallW, locs.confessional.x, 1, wallLight)
+  // Wall between indoor rooms and bathroom/confessional (bottom row)
+  const bottomRowTop = locs.confessional.y  // same as bathroom.y
+  // Bathroom wall (under bedroom) with door gap
+  px(ctx, 0, bottomRowTop - wallW, locs.bathroom.x + locs.bathroom.w, wallW, wallDark)
+  px(ctx, 0, bottomRowTop - wallW, locs.bathroom.x + locs.bathroom.w, 1, wallLight)
+  // Door from bedroom to bathroom
+  px(ctx, locs.bathroom.x + locs.bathroom.w / 2 - 5, bottomRowTop - wallW, 10, wallW, doorColor)
   // Right part (under kitchen)
   const confRight = locs.confessional.x + locs.confessional.w
-  px(ctx, confRight, confTop - wallW, 480 - confRight, wallW, wallDark)
-  px(ctx, confRight, confTop - wallW, 480 - confRight, 1, wallLight)
+  px(ctx, confRight, bottomRowTop - wallW, 480 - confRight, wallW, wallDark)
+  px(ctx, confRight, bottomRowTop - wallW, 480 - confRight, 1, wallLight)
   // Door to confessional from living room
-  px(ctx, locs.confessional.x + locs.confessional.w / 2 - 5, confTop - wallW, 10, wallW, doorColor)
+  px(ctx, locs.confessional.x + locs.confessional.w / 2 - 5, bottomRowTop - wallW, 10, wallW, doorColor)
 
-  // Outer walls for confessional sides
-  px(ctx, locs.confessional.x - wallW, locs.confessional.y, wallW, locs.confessional.h, wallDark)
+  // Wall between bathroom and confessional
+  const bathRight = locs.bathroom.x + locs.bathroom.w
+  px(ctx, bathRight, locs.bathroom.y, wallW, locs.bathroom.h, wallDark)
+
+  // Outer walls
   px(ctx, confRight, locs.confessional.y, wallW, locs.confessional.h, wallDark)
 }
 
@@ -585,7 +653,7 @@ function applyLighting(
   }
 
   // Indoor room windows
-  const windowRooms = [locs.bedroom, locs.living_room]
+  const windowRooms = [locs.bedroom, locs.living_room, locs.bathroom]
   for (const room of windowRooms) {
     const winY = room.y + 4
     const winW = 8

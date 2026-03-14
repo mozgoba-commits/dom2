@@ -9,7 +9,7 @@ const USE_MOCK = false
 
 // ─── Mock agent definitions ──────────────────────────────────
 
-const LOCATIONS: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'confessional']
+const LOCATIONS: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'bathroom', 'confessional']
 const MOODS: Mood[] = ['happy', 'angry', 'sad', 'excited', 'jealous', 'flirty', 'bored', 'anxious', 'neutral', 'annoyed', 'scheming']
 
 const LOCATION_POSITIONS: Record<LocationId, { x: number; y: number }> = {
@@ -17,6 +17,7 @@ const LOCATION_POSITIONS: Record<LocationId, { x: number; y: number }> = {
   bedroom: { x: 40, y: 130 },
   living_room: { x: 160, y: 130 },
   kitchen: { x: 260, y: 130 },
+  bathroom: { x: 40, y: 210 },
   confessional: { x: 160, y: 210 },
 }
 

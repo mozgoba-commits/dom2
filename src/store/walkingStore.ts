@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { Waypoint } from '../engine/pathfinding'
+import { getRoomAt, resolveWalkingCollision } from '../components/canvas/collisionMap'
 
 interface WalkingAgent {
   agentId: string
@@ -79,12 +80,22 @@ export const useWalkingStore = create<WalkingStore>((set, get) => ({
         continue
       }
 
-      // Move towards target
+      // Move towards target with collision resolution
       const step = walker.speed * dt
       const ratio = Math.min(step / dist, 1)
-      walker.currentPos = {
-        x: walker.currentPos.x + dx * ratio,
-        y: walker.currentPos.y + dy * ratio,
+      const nextX = walker.currentPos.x + dx * ratio
+      const nextY = walker.currentPos.y + dy * ratio
+
+      const nextRoom = getRoomAt(nextX, nextY)
+      if (nextRoom) {
+        // Next position is inside a room — apply collision resolution
+        const resolved = resolveWalkingCollision(
+          nextRoom, walker.currentPos.x, walker.currentPos.y, nextX, nextY
+        )
+        walker.currentPos = resolved
+      } else {
+        // Next position is in a door/transition zone between rooms — allow free passage
+        walker.currentPos = { x: nextX, y: nextY }
       }
 
       // Update facing

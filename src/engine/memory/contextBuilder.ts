@@ -18,14 +18,22 @@ export function buildDailySummary(
   const nameMap = new Map(agents.map(a => [a.id, a.bio.name]))
   const getName = (id: string) => nameMap.get(id) ?? 'кто-то'
 
-  // Get important ones
+  // Prioritize reflections, then important memories
+  const reflections = allMemories.filter(m => m.type === 'reflection')
   const important = allMemories
-    .filter(m => m.importance >= 4)
-    .slice(-8)
+    .filter(m => m.importance >= 4 && m.type !== 'reflection')
+    .slice(-6)
 
-  if (important.length === 0) return 'Спокойный день, ничего примечательного.'
+  if (reflections.length === 0 && important.length === 0) return 'Спокойный день, ничего примечательного.'
 
   const parts: string[] = []
+
+  // Reflections first (most synthesized)
+  for (const m of reflections.slice(-2)) {
+    parts.push(`[Вывод] ${m.narrativeSummary ?? m.content}`)
+  }
+
+  // Then important events
   for (const m of important) {
     const text = m.narrativeSummary ?? m.content
     parts.push(text)

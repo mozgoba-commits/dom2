@@ -12,6 +12,7 @@ const OLD_LOCS: Record<LocationId, { x: number; y: number; w: number; h: number 
   bedroom:      { x: 0,   y: 90,  w: 100, h: 100 },
   living_room:  { x: 100, y: 90,  w: 120, h: 100 },
   kitchen:      { x: 220, y: 90,  w: 100, h: 100 },
+  bathroom:     { x: 0,   y: 190, w: 100, h: 50  },
   confessional: { x: 100, y: 190, w: 120, h: 50  },
 }
 const NEW_LOCS: Record<LocationId, { x: number; y: number; w: number; h: number }> = {
@@ -19,6 +20,7 @@ const NEW_LOCS: Record<LocationId, { x: number; y: number; w: number; h: number 
   bedroom:      { x: 0,   y: 133, w: 157, h: 147 },
   living_room:  { x: 160, y: 133, w: 157, h: 147 },
   kitchen:      { x: 320, y: 133, w: 160, h: 147 },
+  bathroom:     { x: 0,   y: 283, w: 157, h: 77  },
   confessional: { x: 160, y: 283, w: 157, h: 77  },
 }
 function storeRemapPosition(location: LocationId, pos: { x: number; y: number }) {

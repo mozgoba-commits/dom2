@@ -10,6 +10,7 @@ import { drawCharacter } from './drawCharacter'
 import { drawEnvironment } from './drawEnvironment'
 import { getAppearance } from './spriteConfig'
 import { emitParticles, tickParticles, drawParticles } from './particleSystem'
+import { clampToWalkable } from './collisionMap'
 
 // ─── Layout constants (exported for SpeechBubbles) ──────────
 
@@ -22,6 +23,7 @@ export const LOCATIONS: Record<LocationId, { x: number; y: number; w: number; h:
   bedroom:      { x: 0,   y: 133, w: 157, h: 147, label: 'Спальня',       color: '#3a3550' },
   living_room:  { x: 160, y: 133, w: 157, h: 147, label: 'Гостиная',      color: '#5c4a32' },
   kitchen:      { x: 320, y: 133, w: 160, h: 147, label: 'Кухня',         color: '#c4a35a' },
+  bathroom:     { x: 0,   y: 283, w: 157, h: 77,  label: 'Ванная',        color: '#2a4a5a' },
   confessional: { x: 160, y: 283, w: 157, h: 77,  label: 'Конфессионная',  color: '#3a1a1a' },
 }
 
@@ -31,6 +33,7 @@ const OLD_LOCATIONS: Record<LocationId, { x: number; y: number; w: number; h: nu
   bedroom:      { x: 0,   y: 90,  w: 100, h: 100 },
   living_room:  { x: 100, y: 90,  w: 120, h: 100 },
   kitchen:      { x: 220, y: 90,  w: 100, h: 100 },
+  bathroom:     { x: 0,   y: 190, w: 100, h: 50  },
   confessional: { x: 100, y: 190, w: 120, h: 50  },
 }
 
@@ -104,7 +107,8 @@ export default function HouseScene() {
     const getAgentPos = (agent: typeof agents[0]) => {
       const walkPos = walkingStore.getState().getPosition(agent.id)
       if (walkPos) return walkPos
-      return remapPosition(agent.location, agent.position)
+      const remapped = remapPosition(agent.location, agent.position)
+      return clampToWalkable(agent.location, remapped.x, remapped.y)
     }
 
     const sortedAgents = [...agents].sort((a, b) => {

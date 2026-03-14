@@ -9,6 +9,7 @@ const LOC_DOT_COLORS: Record<LocationId, string> = {
   bedroom: 'bg-purple-500',
   living_room: 'bg-amber-600',
   kitchen: 'bg-yellow-500',
+  bathroom: 'bg-cyan-600',
   confessional: 'bg-red-700',
 }
 
@@ -17,6 +18,7 @@ const LOCATIONS: { id: LocationId; label: string }[] = [
   { id: 'bedroom', label: 'Спальня' },
   { id: 'living_room', label: 'Гостиная' },
   { id: 'kitchen', label: 'Кухня' },
+  { id: 'bathroom', label: 'Ванная' },
   { id: 'confessional', label: 'Конф.' },
 ]
 

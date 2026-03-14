@@ -2,6 +2,7 @@ import { Agent, Conversation, GameClock, LocationId, Memory, Relationship, LLMMe
 import { formatGameTime } from '../clock'
 import { getVoiceProfile } from './voiceProfiles'
 import { MemoryStore } from '../memory/memoryStore'
+import { calculateStressLevel } from '../agents/personality'
 import {
   buildDailySummary,
   buildActiveStorylines,
@@ -63,13 +64,14 @@ export function stripThinking(content: string): string {
 
 // ─── System prompt (character document) ─────────────────────
 
-export function buildAgentSystemPrompt(agent: Agent): string {
+export function buildAgentSystemPrompt(agent: Agent, day?: number): string {
   const { bio, archetype } = agent
   const voice = getVoiceProfile(archetype)
+  const currentDay = day ?? 999 // default: show everything
 
   const sections: string[] = []
 
-  // WHO YOU ARE
+  // WHO YOU ARE — always visible
   sections.push(`КТО ТЫ:
 Ты — ${bio.name} ${bio.surname}, ${bio.age} лет, из ${bio.hometown}.
 ${bio.occupation}. ${bio.education}.
@@ -77,10 +79,17 @@ ${bio.occupation}. ${bio.education}.
 "${bio.catchphrase}"
 ${bio.reasonForComing}`)
 
-  // SECRET GOAL
-  if (bio.secretGoal) {
+  // SECRET GOAL — revealed from day 4+
+  if (bio.secretGoal && currentDay >= 4) {
     sections.push(`ТАЙНАЯ ЦЕЛЬ (никому не говори напрямую):
 ${bio.secretGoal}`)
+  }
+
+  // VULNERABILITIES — revealed from day 4+
+  if (bio.vulnerabilities?.length && currentDay >= 4) {
+    sections.push(`ТВОИ УЯЗВИМОСТИ (глубокие страхи):
+${bio.vulnerabilities.map(v => `- ${v}`).join('\n')}
+${currentDay >= 8 ? 'Ты уже достаточно давно в доме. Эти уязвимости начинают проявляться чаще.' : 'Ты пока скрываешь эти слабости, но они влияют на тебя.'}`)
   }
 
   // HOW YOU SPEAK
@@ -105,6 +114,20 @@ ${voice.exampleLines.map(l => `- "${l}"`).join('\n')}`)
   sections.push(`ТВОЙ ХАРАКТЕР:
 ${traitNarrative(agent)}`)
 
+  // ABSOLUTE RULES (always/never)
+  if (bio.alwaysRules?.length || bio.neverRules?.length) {
+    const rules: string[] = []
+    if (bio.alwaysRules?.length) {
+      rules.push(...bio.alwaysRules.map(r => `ВСЕГДА: ${r}`))
+    }
+    if (bio.neverRules?.length) {
+      rules.push(...bio.neverRules.map(r => `НИКОГДА: ${r}`))
+    }
+    sections.push(`АБСОЛЮТНЫЕ ПРАВИЛА ПЕРСОНАЖА:
+${rules.join('\n')}
+Эти правила — часть твоей натуры. Нарушить их можно ТОЛЬКО в момент полного срыва (стресс > 80).`)
+  }
+
   // RULES
   sections.push(`ПРАВИЛА:
 - Говори ТОЛЬКО от первого лица, как ${bio.name}
@@ -114,9 +137,28 @@ ${traitNarrative(agent)}`)
 - Можешь перебить, сменить тему, быть грубым, промолчать
 - РЕАГИРУЙ на то, что сказал собеседник
 - Не упоминай что ты ИИ
-- Действия в звёздочках: *закатывает глаза*`)
+- ТОЛЬКО реплики, никаких описаний действий и ремарок в звёздочках`)
 
   return sections.join('\n\n')
+}
+
+// ─── Stress section for prompts ─────────────────────────────
+
+function buildStressSection(agent: Agent): string {
+  const stress = calculateStressLevel(agent)
+  const voice = getVoiceProfile(agent.archetype)
+
+  if (stress < 30) {
+    return 'Ты спокоен(на). Можешь позволить себе показать уязвимость или мягкость.'
+  } else if (stress < 60) {
+    return 'Ты напряжён(а). Типичные защитные механизмы работают. Ты ведёшь себя как обычно, но менее терпелив(а).'
+  } else if (stress < 80) {
+    const stressNote = voice.stressResponse ? `\n${voice.stressResponse}` : ''
+    return `Ты под СИЛЬНЫМ давлением. Скрытые черты выходят наружу. Маска трескается.${stressNote}`
+  } else {
+    const stressNote = voice.stressResponse ? `\n${voice.stressResponse}` : ''
+    return `СРЫВ. Фильтры отключены. Можешь сказать то, о чём потом пожалеешь. Абсолютные правила персонажа могут быть нарушены.${stressNote}`
+  }
 }
 
 // ─── Decision prompt ─────────────────────────────────────────
@@ -130,7 +172,7 @@ export function buildDecisionPrompt(
   memoryStore?: MemoryStore,
   allAgents?: Agent[],
 ): LLMMessage[] {
-  const system = buildAgentSystemPrompt(agent)
+  const system = buildAgentSystemPrompt(agent, clock.day)
 
   const nearbyList = nearbyAgents
     .map(a => {
@@ -157,6 +199,21 @@ export function buildDecisionPrompt(
     .map(m => `- ${m.narrativeSummary ?? m.content}`)
     .join('\n')
 
+  // Stress and plan context
+  const stressSection = buildStressSection(agent)
+  const planNote = agent.currentPlan?.goals?.length
+    ? `Твой план на сегодня: ${agent.currentPlan.goals.join('; ')}\n`
+    : ''
+
+  // Reflections
+  let reflectionNote = ''
+  if (memoryStore) {
+    const reflections = memoryStore.getReflections(agent.id, 2)
+    if (reflections.length > 0) {
+      reflectionNote = 'Твои выводы: ' + reflections.map(r => r.narrativeSummary ?? r.content).join(' ') + '\n'
+    }
+  }
+
   const user = `<thinking>
 Подумай как ${agent.bio.name}:
 - Что я чувствую прямо сейчас?
@@ -167,8 +224,9 @@ export function buildDecisionPrompt(
 
 ${formatGameTime(clock)}. Локация: ${locationToRussian(agent.location)}.
 ${emotionNarrative(agent)} Энергия: ${Math.round(agent.energy)}%.
+${stressSection}
 
-${dailySummary ? `Сегодня: ${dailySummary}\n` : ''}${storylines ? `\n${storylines}\n` : ''}${gossip ? `\n${gossip}\n` : ''}
+${planNote}${reflectionNote}${dailySummary ? `Сегодня: ${dailySummary}\n` : ''}${storylines ? `\n${storylines}\n` : ''}${gossip ? `\n${gossip}\n` : ''}
 Рядом:
 ${nearbyList || '(никого)'}
 
@@ -179,7 +237,7 @@ ${memoryList || '(ничего важного)'}
 {
   "action": "move" | "talk" | "flirt" | "argue" | "gossip" | "comfort" | "manipulate" | "avoid" | "rest" | "think" | "confront" | "apologize",
   "targetAgent": "имя или null",
-  "targetLocation": "yard" | "bedroom" | "living_room" | "kitchen" | "confessional" | null,
+  "targetLocation": "yard" | "bedroom" | "living_room" | "kitchen" | "bathroom" | "confessional" | null,
   "reasoning": "краткое объяснение от первого лица",
   "hiddenMotivation": "что ты РЕАЛЬНО хочешь этим добиться",
   "urgency": число от 0 до 10
@@ -204,7 +262,7 @@ export function buildConversationPrompt(
   allAgents?: Agent[],
   clock?: GameClock,
 ): LLMMessage[] {
-  const system = buildAgentSystemPrompt(agent)
+  const system = buildAgentSystemPrompt(agent, clock?.day)
 
   const history = conversation.messages.slice(-10)
     .map(m => `${m.agentId === agent.id ? agent.bio.name : otherAgent.bio.name}: ${m.content}`)
@@ -239,6 +297,28 @@ export function buildConversationPrompt(
     ? '\n[НАПРЯЖЕНИЕ НАРАСТАЕТ — конфликт может вспыхнуть!]\n'
     : ''
 
+  // Stress section
+  const stressSection = buildStressSection(agent)
+
+  // Vulnerability alert
+  const vulnerabilityNote = agent.activeVulnerability
+    ? `\n[УЯЗВИМОСТЬ ЗАДЕТА: ${agent.activeVulnerability}. Реагируй более остро, эмоционально.]`
+    : ''
+
+  // Plan context
+  const planNote = agent.currentPlan?.goals?.length
+    ? `\nТвой план на сегодня: ${agent.currentPlan.goals.join('; ')}`
+    : ''
+
+  // Reflections
+  let reflectionNote = ''
+  if (memoryStore) {
+    const reflections = memoryStore.getReflections(agent.id, 2)
+    if (reflections.length > 0) {
+      reflectionNote = '\nТвои выводы: ' + reflections.map(r => r.narrativeSummary ?? r.content).join(' ')
+    }
+  }
+
   const user = `<thinking>
 Подумай как ${agent.bio.name}:
 - Что только что сказал ${otherAgent.bio.name}? Как я к этому отношусь?
@@ -250,14 +330,13 @@ export function buildConversationPrompt(
 Ты разговариваешь с ${otherAgent.bio.name} (${otherAgent.archetype}).
 ${relNarrative}
 ${emotionNarrative(agent)}
-${tensionNote}
+${stressSection}${vulnerabilityNote}${tensionNote}${planNote}${reflectionNote}
 Контекст: ${context}
 ${dailySummary ? `\nСегодня: ${dailySummary}` : ''}${gossip ? `\n${gossip}` : ''}
 ${memories ? `\nТы помнишь:\n${memories}` : ''}
 ${history ? `\nДиалог:\n${history}` : ''}
 
-Ответь как ${agent.bio.name}. 1-3 предложения.
-Можешь добавить действие: *закатывает глаза*
+Ответь как ${agent.bio.name}. 1-3 предложения. Только реплику, без ремарок.
 Можешь перебить, сменить тему, промолчать или нагрубить.
 Если хочешь закончить разговор: [УХОДИТ].`
 
@@ -278,7 +357,7 @@ export function buildConfessionalPrompt(
   clock?: GameClock,
 ): LLMMessage[] {
   const voice = getVoiceProfile(agent.archetype)
-  const system = buildAgentSystemPrompt(agent) + `
+  const system = buildAgentSystemPrompt(agent, clock?.day) + `
 
 КОНФЕССИОННАЯ — единственное место где ты можешь быть честным.
 Стиль внутреннего голоса: ${voice.innerVoice}
@@ -309,24 +388,45 @@ export function buildConfessionalPrompt(
     .filter(Boolean)
     .join('; ')
 
+  // Reflections
+  let reflectionNote = ''
+  if (memoryStore) {
+    const reflections = memoryStore.getReflections(agent.id, 3)
+    if (reflections.length > 0) {
+      reflectionNote = '\nТвои размышления за последнее время:\n' +
+        reflections.map(r => `- ${r.narrativeSummary ?? r.content}`).join('\n')
+    }
+  }
+
+  // Stress section
+  const stressSection = buildStressSection(agent)
+
+  // Plan
+  const planNote = agent.currentPlan?.goals?.length
+    ? `\nТвой план на сегодня: ${agent.currentPlan.goals.join('; ')}`
+    : ''
+
   const user = `<thinking>
 Спроси себя:
 - Кто мне реально нравится? Кого я ненавижу?
 - Чего я боюсь?
-- Какой мой план на ближайшее время?
+- Кого я считаю главной угрозой?
+- Какой мой план на завтра?
 - О чём я не могу рассказать другим участникам?
+- Что я понял(а) о себе за последнее время?
 </thinking>
 
 Ты в конфессионной. Расскажи камере что ты РЕАЛЬНО думаешь.
 ${emotionNarrative(agent)}
-${dailySummary ? `\nСегодня: ${dailySummary}` : ''}
+${stressSection}
+${dailySummary ? `\nСегодня: ${dailySummary}` : ''}${reflectionNote}${planNote}
 
 События:
 ${memoryList}
 
 Отношения: ${relSummary || 'ещё не сложились'}
 
-2-4 предложения. Будь честным.`
+2-4 предложения. Будь честным. Покажи внутренние противоречия.`
 
   return [
     { role: 'system', content: system },
@@ -420,6 +520,7 @@ function locationToRussian(loc: LocationId): string {
     bedroom: 'Спальня',
     living_room: 'Гостиная',
     kitchen: 'Кухня',
+    bathroom: 'Ванная',
     confessional: 'Конфессионная',
   }
   return map[loc]

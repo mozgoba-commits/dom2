@@ -42,6 +42,21 @@ export async function makeDecision(
     }
   }
 
+  // Time-of-day activity patterns — some agents are more active at certain times
+  const isLowActivityHour = (
+    (agent.archetype === 'Тихий стратег' && clock.hour < 12) || // Тимур active evenings
+    (agent.archetype === 'Философ-тролль' && clock.hour < 14) || // Олег active evenings
+    (agent.archetype === 'Наивная' && clock.hour >= 21) // Настя less active late
+  )
+  if (isLowActivityHour && Math.random() < 0.3) {
+    return {
+      agentId: agent.id,
+      action: 'think',
+      reasoning: 'Не моё время... наблюдаю',
+      urgency: 2,
+    }
+  }
+
   // Low energy → rest
   if (agent.energy < 15) {
     return {
@@ -70,6 +85,34 @@ export async function makeDecision(
         targetLocation: target.target.location,
         reasoning: target.reason,
         urgency: 7,
+      }
+    }
+  }
+
+  // --- Plan-based decisions ---
+  if (agent.currentPlan?.goals?.length) {
+    const unfinishedGoals = agent.currentPlan.goals
+    // Check if any goal mentions a specific person nearby
+    for (const goal of unfinishedGoals) {
+      const targetMatch = others.find(a =>
+        goal.includes(a.bio.name) && a.location === agent.location
+      )
+      if (targetMatch) {
+        // Determine action from goal keywords
+        let action: ActionType = 'talk'
+        if (/избегать|держаться подальше/i.test(goal)) action = 'avoid'
+        else if (/флирт|ближе/i.test(goal)) action = 'flirt'
+        else if (/альянс|союз/i.test(goal)) action = 'form_alliance'
+        else if (/конфронт|выяснить/i.test(goal)) action = 'confront'
+
+        return {
+          agentId: agent.id,
+          action,
+          targetAgentId: targetMatch.id,
+          targetLocation: targetMatch.location,
+          reasoning: goal,
+          urgency: 6,
+        }
       }
     }
   }
@@ -117,7 +160,7 @@ export async function makeDecision(
   }
 
   // --- Fallback: random wandering ---
-  const locations: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen']
+  const locations: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'bathroom']
   const randomLoc = locations[Math.floor(Math.random() * locations.length)]
   return {
     agentId: agent.id,
@@ -156,6 +199,6 @@ function validateAction(action: string): ActionType {
 
 function validateLocation(loc: string | null): LocationId | undefined {
   if (!loc) return undefined
-  const valid: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'confessional']
+  const valid: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'bathroom', 'confessional']
   return valid.includes(loc as LocationId) ? (loc as LocationId) : undefined
 }

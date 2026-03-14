@@ -1,11 +1,12 @@
 import {
-  Agent, SimulationState, SSEEvent, LocationId, GameEvent,
+  Agent, SimulationState, SSEEvent, LocationId, GameEvent, Relationship,
 } from './types'
 import { createClock, advanceClock, isNightTime, formatGameTime } from './clock'
 import { createStartingCast } from './agents/presets'
 import {
   decayNeeds, decayEmotions, decayEnergy, recoverEnergy,
   satisfyNeed, applyEmotionalImpact,
+  applyEmotionalContagion, calculateStressLevel,
 } from './agents/personality'
 import { makeDecision } from './decisions/decisionEngine'
 import { ConversationEngine } from './conversations/conversationEngine'
@@ -18,6 +19,8 @@ import { amplifyDrama, shouldTriggerEvent } from './drama/dramaAmplifier'
 import { applyInteraction, checkJealousyTrigger } from './relationships/dynamics'
 import { runTokShow } from './events/tokShow'
 import { calculateImportance } from './memory/importance'
+import { generateReflection } from './memory/reflectionEngine'
+import { generateDayPlan } from './agents/planner'
 
 export type SimulationEventHandler = (event: SSEEvent) => void
 
@@ -32,6 +35,9 @@ export class Simulation {
   private tickInterval: ReturnType<typeof setInterval> | null = null
   private useLLM: boolean
   private recentAlerts: Map<string, number> = new Map() // alert text -> tick when last sent
+  private lastReflectionTick = 0
+  private reflectionRotation = 0 // index into agents array for fair rotation
+  private lastPlanDay = 0
 
   constructor(useLLM = true) {
     this.useLLM = useLLM
@@ -43,7 +49,7 @@ export class Simulation {
 
     const agents = createStartingCast()
     // Scatter agents across locations
-    const locations: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'living_room', 'kitchen', 'yard', 'living_room']
+    const locations: LocationId[] = ['yard', 'living_room', 'kitchen']
     agents.forEach((a, i) => {
       a.location = locations[i % locations.length]
       a.position = getLocationPosition(a.location, i)
@@ -114,6 +120,32 @@ export class Simulation {
       return { ...agent, emotions: decayEmotions(agent.emotions) }
     })
 
+    // 3b. Emotional contagion — agents in same room spread emotions
+    const agentsByLocation = new Map<LocationId, Agent[]>()
+    for (const agent of state.agents) {
+      if (agent.isEvicted) continue
+      const loc = agent.location
+      if (!agentsByLocation.has(loc)) agentsByLocation.set(loc, [])
+      agentsByLocation.get(loc)!.push(agent)
+    }
+    for (const [, group] of agentsByLocation) {
+      if (group.length < 2) continue
+      for (const agent of group) {
+        const oldMood = agent.emotions.currentMood
+        agent.emotions = applyEmotionalContagion(agent, group)
+        if (agent.emotions.currentMood !== oldMood) {
+          console.log(`[Contagion] ${agent.bio.name} caught mood ${agent.emotions.currentMood} from nearby agents`)
+        }
+      }
+    }
+
+    // 3c. Clear vulnerability flags (decay after 5 ticks)
+    for (const agent of state.agents) {
+      if (agent.activeVulnerability && Math.random() < 0.2) {
+        agent.activeVulnerability = undefined
+      }
+    }
+
     // 4. Update energy
     state.agents = state.agents.map(agent => {
       if (agent.isEvicted) return agent
@@ -132,13 +164,12 @@ export class Simulation {
     // 6. Handle sleeping — assign each agent to a specific bed position
     if (isNightTime(state.clock)) {
       // Bed positions in OLD server coordinate space (bedroom: x:0, y:90, w:100, h:100)
-      // Client will remap these to canvas coordinates
       const bedPositions = [
         { x: 15, y: 110 },  // bed 1 (top-left)
         { x: 15, y: 165 },  // bed 2 (bottom-left)
         { x: 75, y: 110 },  // bed 3 (top-right)
         { x: 75, y: 165 },  // bed 4 (bottom-right)
-        { x: 35, y: 110 },  // overflow positions
+        { x: 35, y: 110 },
         { x: 35, y: 165 },
         { x: 55, y: 110 },
         { x: 55, y: 165 },
@@ -148,14 +179,31 @@ export class Simulation {
         if (agent.isEvicted) return agent
         const bed = bedPositions[bedIdx % bedPositions.length]
         bedIdx++
-        return { ...agent, status: 'sleeping', location: 'bedroom', position: bed }
+        const wasNotSleeping = agent.status !== 'sleeping' || agent.location !== 'bedroom'
+        const updated = { ...agent, status: 'sleeping' as const, location: 'bedroom' as LocationId, position: bed }
+        // Emit move event so client animates the transition
+        if (wasNotSleeping) {
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: 'bedroom', position: bed },
+            tick,
+          })
+        }
+        return updated
       })
     } else {
-      // Wake up
+      // Wake up — move to living room
       state.agents = state.agents.map(agent => {
         if (agent.isEvicted) return agent
-        if (agent.status === 'sleeping' && !isNightTime(state.clock)) {
-          return { ...agent, status: 'free' }
+        if (agent.status === 'sleeping') {
+          const wakeLocation: LocationId = 'living_room'
+          const pos = randomLocationPosition(wakeLocation)
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: wakeLocation, position: pos },
+            tick,
+          })
+          return { ...agent, status: 'free' as const, location: wakeLocation, position: pos }
         }
         return agent
       })
@@ -182,9 +230,33 @@ export class Simulation {
       for (const agent of state.agents) {
         if (agent.isEvicted || agent.status !== 'free') continue
         if (Math.random() > 0.4) continue // 40% chance per eligible tick
+
+        // 15% chance to go to bathroom
+        if (Math.random() < 0.15 && agent.location !== 'bathroom') {
+          agent.location = 'bathroom'
+          agent.position = randomLocationPosition('bathroom')
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: 'bathroom', position: agent.position },
+            tick,
+          })
+          continue
+        }
+        // If in bathroom, leave after one cycle
+        if (agent.location === 'bathroom') {
+          const dest: LocationId = ['yard', 'living_room', 'kitchen'][Math.floor(Math.random() * 3)] as LocationId
+          agent.location = dest
+          agent.position = randomLocationPosition(dest)
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: dest, position: agent.position },
+            tick,
+          })
+          continue
+        }
+
         const oldPos = { ...agent.position }
-        agent.position = getLocationPosition(agent.location, Math.floor(Math.random() * 8))
-        // Only emit if position actually changed significantly
+        agent.position = randomLocationPosition(agent.location)
         if (Math.abs(oldPos.x - agent.position.x) > 5 || Math.abs(oldPos.y - agent.position.y) > 5) {
           this.emit({
             type: 'agent_move',
@@ -199,7 +271,7 @@ export class Simulation {
     const activeConvs = this.conversationEngine.getActiveConversations()
     for (const conv of activeConvs) {
       const msg = await this.conversationEngine.progressConversation(
-        conv, state.agents, tick, this.memoryStore, this.relationshipGraph, this.useLLM
+        conv, state.agents, tick, this.memoryStore, this.relationshipGraph, this.useLLM, state.clock
       )
       if (msg) {
         const speaker = state.agents.find(a => a.id === msg.agentId)
@@ -272,6 +344,32 @@ export class Simulation {
     if (tick % 60 === 0) {
       for (const [key, t] of this.recentAlerts) {
         if (tick - t > 60) this.recentAlerts.delete(key)
+      }
+    }
+
+    // 10b. Reflections — every 30 ticks, 1-2 agents synthesize insights
+    if (tick - this.lastReflectionTick >= 30 && this.useLLM) {
+      this.lastReflectionTick = tick
+      const activeAgents = state.agents.filter(a => !a.isEvicted)
+      const count = Math.min(2, activeAgents.length)
+      for (let i = 0; i < count; i++) {
+        const agentIdx = (this.reflectionRotation + i) % activeAgents.length
+        const agent = activeAgents[agentIdx]
+        // Run async without blocking tick
+        generateReflection(agent, this.memoryStore, tick - 30, state.agents, tick)
+          .catch(err => console.warn(`[Reflection] Error for ${agent.bio.name}:`, err))
+      }
+      this.reflectionRotation = (this.reflectionRotation + count) % Math.max(1, activeAgents.length)
+    }
+
+    // 10c. Day planning — at 08:00 each day
+    if (state.clock.hour === 8 && state.clock.minute === 0 && state.clock.day > this.lastPlanDay && this.useLLM) {
+      this.lastPlanDay = state.clock.day
+      for (const agent of state.agents) {
+        if (agent.isEvicted) continue
+        generateDayPlan(agent, state.agents, this.memoryStore, this.relationshipGraph, state.clock)
+          .then(plan => { agent.currentPlan = plan })
+          .catch(err => console.warn(`[Planner] Error for ${agent.bio.name}:`, err))
       }
     }
 
@@ -370,9 +468,10 @@ export class Simulation {
           this.relationshipGraph, agent, target, decision.action, tick, decision.reasoning
         )
 
-        // Apply emotional impact
-        agent.emotions = applyEmotionalImpact(agent.emotions, getEmotionalImpact(decision.action, 'actor'))
-        target.emotions = applyEmotionalImpact(target.emotions, getEmotionalImpact(decision.action, 'target'))
+        // Apply emotional impact (relationship-aware)
+        const rel = this.relationshipGraph.get(agent.id, target.id)
+        agent.emotions = applyEmotionalImpact(agent.emotions, getEmotionalImpact(decision.action, 'actor', rel))
+        target.emotions = applyEmotionalImpact(target.emotions, getEmotionalImpact(decision.action, 'target', rel))
 
         // Satisfy needs
         agent.needs = satisfyNeed(agent.needs, 'socialNeed', 15)
@@ -383,13 +482,22 @@ export class Simulation {
           agent.needs = satisfyNeed(agent.needs, 'dominanceNeed', 20)
         }
 
-        // Start or continue conversation for talk-like actions
+        // Start or join conversation for talk-like actions
         if (['talk', 'flirt', 'gossip', 'comfort', 'argue', 'confront'].includes(decision.action)) {
           const existingConv = this.conversationEngine.getAgentConversation(agent.id)
           if (!existingConv) {
-            agent.status = 'in_conversation'
-            target.status = 'in_conversation'
-            this.conversationEngine.startConversation(agent, target, tick, decision.reasoning)
+            // Check if target is already in a conversation we can join (group conversation)
+            const targetConv = this.conversationEngine.getAgentConversation(target.id)
+            if (targetConv && targetConv.participants.length < 4 && !targetConv.isPrivate) {
+              // Join existing conversation
+              targetConv.participants.push(agent.id)
+              agent.status = 'in_conversation'
+              console.log(`[GroupConv] ${agent.bio.name} joined conversation with ${targetConv.participants.length} participants`)
+            } else if (!targetConv) {
+              agent.status = 'in_conversation'
+              target.status = 'in_conversation'
+              this.conversationEngine.startConversation(agent, target, tick, decision.reasoning)
+            }
           }
         }
 
@@ -432,8 +540,14 @@ export class Simulation {
       }
 
       case 'rest': {
-        if (decision.targetLocation) {
+        if (decision.targetLocation && decision.targetLocation !== agent.location) {
           agent.location = decision.targetLocation
+          agent.position = getLocationPosition(decision.targetLocation, this.state.agents.indexOf(agent))
+          this.emit({
+            type: 'agent_move',
+            data: { agentId: agent.id, name: agent.bio.name, location: agent.location, position: agent.position },
+            tick,
+          })
         }
         agent.status = 'free'
         agent.energy = Math.min(100, agent.energy + 3)
@@ -455,10 +569,15 @@ export class Simulation {
       case 'avoid': {
         // Move to a different location
         const currentLoc = agent.location
-        const otherLocations: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen']
+        const otherLocations: LocationId[] = ['yard', 'bedroom', 'living_room', 'kitchen', 'bathroom']
           .filter(l => l !== currentLoc) as LocationId[]
         agent.location = otherLocations[Math.floor(Math.random() * otherLocations.length)]
         agent.position = getLocationPosition(agent.location, this.state.agents.indexOf(agent))
+        this.emit({
+          type: 'agent_move',
+          data: { agentId: agent.id, name: agent.bio.name, location: agent.location, position: agent.position },
+          tick,
+        })
         break
       }
     }
@@ -587,43 +706,108 @@ export class Simulation {
   }
 }
 
+// Old-coordinate-space room bounds (server sends positions in this space)
+const OLD_ROOM_BOUNDS: Record<LocationId, { x: number; y: number; w: number; h: number }> = {
+  yard:         { x: 10,  y: 10,  w: 300, h: 70  },
+  bedroom:      { x: 10,  y: 100, w: 80,  h: 80  },
+  living_room:  { x: 110, y: 100, w: 100, h: 80  },
+  kitchen:      { x: 230, y: 100, w: 80,  h: 80  },
+  bathroom:     { x: 10,  y: 195, w: 80,  h: 40  },
+  confessional: { x: 110, y: 195, w: 100, h: 40  },
+}
+
+/** Generate a spread-out position within a room (OLD server coordinate space).
+ *  Index-based for deterministic placement, with padding to avoid walls. */
 function getLocationPosition(location: LocationId, index: number): { x: number; y: number } {
-  const base: Record<LocationId, { x: number; y: number }> = {
-    yard: { x: 160, y: 40 },
-    bedroom: { x: 40, y: 130 },
-    living_room: { x: 160, y: 130 },
-    kitchen: { x: 260, y: 130 },
-    confessional: { x: 160, y: 200 },
+  const bounds = OLD_ROOM_BOUNDS[location]
+  if (!bounds) return { x: 160, y: 130 }
+
+  // Spread agents in a grid pattern within the room's walkable interior
+  const margin = 12
+  const innerW = bounds.w - margin * 2
+  const innerH = bounds.h - margin * 2
+  const cols = Math.max(2, Math.ceil(Math.sqrt(8))) // 3 columns for up to 8 agents
+  const rows = Math.max(2, Math.ceil(8 / cols))
+  const col = index % cols
+  const row = Math.floor(index / cols) % rows
+
+  return {
+    x: Math.round(bounds.x + margin + (col + 0.5) * (innerW / cols)),
+    y: Math.round(bounds.y + margin + (row + 0.5) * (innerH / rows)),
   }
-  const b = base[location]
-  // Offset within location
-  const offset = index * 20
-  return { x: b.x + (offset % 60) - 30, y: b.y + Math.floor(offset / 60) * 20 }
+}
+
+/** Generate a random position within a room (OLD server coordinate space) */
+function randomLocationPosition(location: LocationId): { x: number; y: number } {
+  const bounds = OLD_ROOM_BOUNDS[location]
+  if (!bounds) return { x: 160, y: 130 }
+
+  const margin = 15
+  return {
+    x: Math.round(bounds.x + margin + Math.random() * (bounds.w - margin * 2)),
+    y: Math.round(bounds.y + margin + Math.random() * (bounds.h - margin * 2)),
+  }
 }
 
 function getEmotionalImpact(
   action: string,
-  role: 'actor' | 'target'
-): Partial<{ happiness: number; anger: number; sadness: number; excitement: number; love: number; jealousy: number }> {
+  role: 'actor' | 'target',
+  relationship?: Relationship | null,
+): Partial<{ happiness: number; anger: number; sadness: number; excitement: number; love: number; jealousy: number; fear: number }> {
+  let base: Partial<{ happiness: number; anger: number; sadness: number; excitement: number; love: number; jealousy: number; fear: number }>
+
   if (role === 'actor') {
     switch (action) {
-      case 'flirt': return { excitement: 10, love: 5, happiness: 5 }
-      case 'argue': return { anger: 8, excitement: 5 }
-      case 'comfort': return { happiness: 5 }
-      case 'confront': return { anger: 6, excitement: 3 }
-      case 'manipulate': return { excitement: 5 }
-      case 'apologize': return { sadness: 5 }
-      default: return { happiness: 3 }
+      case 'flirt': base = { excitement: 10, love: 5, happiness: 5 }; break
+      case 'argue': base = { anger: 8, excitement: 5 }; break
+      case 'comfort': base = { happiness: 5 }; break
+      case 'confront': base = { anger: 6, excitement: 3 }; break
+      case 'manipulate': base = { excitement: 5 }; break
+      case 'apologize': base = { sadness: 5 }; break
+      default: base = { happiness: 3 }
     }
   } else {
     switch (action) {
-      case 'flirt': return { excitement: 8, love: 3, happiness: 5 }
-      case 'argue': return { anger: 10, sadness: 3 }
-      case 'comfort': return { happiness: 15, sadness: -10 }
-      case 'confront': return { anger: 8, sadness: 5 }
-      case 'manipulate': return { happiness: 3 } // doesn't know they're being manipulated
-      case 'apologize': return { happiness: 10, anger: -10 }
-      default: return { happiness: 2 }
+      case 'flirt': base = { excitement: 8, love: 3, happiness: 5 }; break
+      case 'argue': base = { anger: 10, sadness: 3 }; break
+      case 'comfort': base = { happiness: 15, sadness: -10 }; break
+      case 'confront': base = { anger: 8, sadness: 5 }; break
+      case 'manipulate': base = { happiness: 3 }; break // doesn't know they're being manipulated
+      case 'apologize': base = { happiness: 10, anger: -10 }; break
+      default: base = { happiness: 2 }
     }
   }
+
+  // Relationship-aware multipliers (only for target)
+  if (role === 'target' && relationship) {
+    const result = { ...base }
+
+    // Flirt from someone you love → amplified
+    if (action === 'flirt' && relationship.romance > 50) {
+      if (result.excitement) result.excitement = Math.round(result.excitement * 2)
+      if (result.love) result.love = Math.round(result.love * 2)
+    }
+
+    // Comfort from rival → reduced + fear
+    if (action === 'comfort' && relationship.rivalry > 50) {
+      if (result.happiness) result.happiness = Math.round(result.happiness * 0.3)
+      result.fear = (result.fear ?? 0) + 5
+    }
+
+    // Confront from ally → betrayal hurt amplified
+    if ((action === 'confront' || action === 'argue') && relationship.alliance) {
+      if (result.anger) result.anger = Math.round(result.anger * 2)
+      if (result.sadness) result.sadness = Math.round((result.sadness ?? 0) * 2 + 10)
+    }
+
+    // Manipulate when trust is very low → target sees through it
+    if (action === 'manipulate' && relationship.trust < -30) {
+      result.happiness = 0
+      result.anger = (result.anger ?? 0) + 10
+    }
+
+    return result
+  }
+
+  return base
 }

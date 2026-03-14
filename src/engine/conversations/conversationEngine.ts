@@ -1,15 +1,18 @@
 import {
-  Agent, Conversation, ConversationMessage, Mood,
+  Agent, Conversation, ConversationMessage, GameClock, Mood, VulnerabilityTrigger,
 } from '../types'
 import { MemoryStore } from '../memory/memoryStore'
 import { RelationshipGraph } from '../relationships/graph'
 import { llmGenerate } from '../llm/provider'
 import { buildConversationPrompt, stripThinking } from '../llm/promptBuilder'
+import { applyEmotionalImpact } from '../agents/personality'
 import { calculateImportance, EventCategory } from '../memory/importance'
 import { nanoid } from 'nanoid'
 
 const MAX_CONVERSATION_TURNS = 8
 const MAX_ACTIVE_CONVERSATIONS = 10
+const MIN_TICKS_BETWEEN_MESSAGES = 2 // minimum 2 ticks (~20 game min) between messages in same conversation
+const MAX_MESSAGE_LENGTH = 200 // characters
 
 // Keywords that increase tension
 const TENSION_KEYWORDS = /предатель|лжец|ненавижу|пошёл|ублюд|сволочь|врёшь|заткнись|кричит|орёт|бьёт|угрожа/i
@@ -76,9 +79,14 @@ export class ConversationEngine {
     tick: number,
     memoryStore: MemoryStore,
     relationshipGraph: RelationshipGraph,
-    useLLM = true
+    useLLM = true,
+    clock?: GameClock,
   ): Promise<ConversationMessage | null> {
     if (conv.endedAtTick !== null) return null
+
+    // Cooldown: don't generate messages too fast
+    const lastMsgTick = conv.messages.length > 0 ? conv.messages[conv.messages.length - 1].tick : conv.startedAtTick
+    if (tick - lastMsgTick < MIN_TICKS_BETWEEN_MESSAGES) return null
 
     // Dynamic turn limits: high tension allows more turns
     const maxTurns = (conv.tension ?? 0) > 5 ? 12 : MAX_CONVERSATION_TURNS
@@ -117,7 +125,7 @@ export class ConversationEngine {
         const prompt = buildConversationPrompt(
           speaker, otherAgent, conv, recentMemories, relationship,
           conv.topic ?? 'обычный разговор',
-          memoryStore, agents, undefined
+          memoryStore, agents, clock
         )
         const response = await llmGenerate(prompt, 'cheap')
         content = stripThinking(response.content)
@@ -128,10 +136,12 @@ export class ConversationEngine {
           this.endConversation(conv.id, tick)
         }
 
-        // Extract action from asterisks
-        const actionMatch = content.match(/\*([^*]+)\*/)
-        if (actionMatch) {
-          action = actionMatch[1]
+        // Strip ALL asterisk descriptions
+        content = content.replace(/\*[^*]+\*/g, '').replace(/\s{2,}/g, ' ').trim()
+
+        // Limit message length
+        if (content.length > MAX_MESSAGE_LENGTH) {
+          content = content.slice(0, MAX_MESSAGE_LENGTH).replace(/\s\S*$/, '') + '...'
         }
       } catch (error) {
         console.warn(`LLM conversation failed for ${speaker.bio.name}:`, error)
@@ -188,6 +198,9 @@ export class ConversationEngine {
       false, undefined, emotionalContext,
     )
 
+    // Check vulnerability triggers on the listener
+    this.checkVulnerabilityTriggers(content, otherAgent, speaker, memoryStore, tick, conv)
+
     return message
   }
 
@@ -224,6 +237,49 @@ export class ConversationEngine {
     return 'casual_chat'
   }
 
+  private checkVulnerabilityTriggers(
+    content: string,
+    listener: Agent,
+    speaker: Agent,
+    memoryStore: MemoryStore,
+    tick: number,
+    conv: Conversation,
+  ) {
+    const triggers = listener.bio.vulnerabilityTriggers
+    if (!triggers?.length) return
+
+    const contentLower = content.toLowerCase()
+    for (const trigger of triggers) {
+      const matched = trigger.keywords.some(kw => contentLower.includes(kw.toLowerCase()))
+      if (matched) {
+        // Apply emotional impact
+        const impact: Record<string, number> = { [trigger.emotion]: trigger.intensity }
+        listener.emotions = applyEmotionalImpact(listener.emotions, impact)
+
+        // Set active vulnerability flag
+        listener.activeVulnerability = trigger.behavioralShift
+
+        // High-importance memory
+        const matchedKeyword = trigger.keywords.find(kw => contentLower.includes(kw.toLowerCase()))
+        memoryStore.addMemory(
+          listener.id, tick, 'emotion',
+          `${speaker.bio.name} задел(а) больное место ("${matchedKeyword}"). ${trigger.behavioralShift}`,
+          8,
+          [speaker.id],
+          conv.location,
+          false, undefined,
+          `Уязвимость задета: ${trigger.behavioralShift}`,
+        )
+
+        // Increase tension
+        conv.tension = Math.min(10, (conv.tension ?? 0) + 3)
+
+        console.log(`[Vulnerability] ${listener.bio.name} triggered by "${matchedKeyword}" from ${speaker.bio.name}`)
+        break // only one trigger per message
+      }
+    }
+  }
+
   getAgentConversation(agentId: string): Conversation | null {
     return this.getActiveConversations().find(
       c => c.participants.includes(agentId)
@@ -244,94 +300,94 @@ function generateFallbackDialogue(speaker: Agent, other: Agent): string {
       `Ну давай, ${name}, удиви меня.`,
       'Я тут единственный кто реально что-то делает.',
       'Хватит болтать, давай к делу.',
-      '*складывает руки на груди* Ну и что дальше?',
+      'Ну и что дальше?',
       `Слышь, ${name}, я тебя предупреждаю — со мной лучше не шутить.`,
       'Тут нужен лидер, и это точно не ты.',
       'Ладно, продолжай... я слушаю.',
     ],
     'Тихий стратег': [
-      `*задумчиво смотрит на ${name}* Любопытный ход...`,
+      'Любопытный ход...',
       'Видишь ли, всё это не случайно.',
       `А ты замечал, ${name}, как тут все друг за другом наблюдают?`,
-      '*делает паузу* Нет, ты продолжай. Я внимательно слушаю.',
+      'Нет, ты продолжай. Я внимательно слушаю.',
       'Мне кажется, тут есть второе дно.',
       'Давай просто подождём и посмотрим что будет.',
-      '*чуть улыбается* Ты сейчас даже не представляешь, насколько это важно.',
+      'Ты сейчас даже не представляешь, насколько это важно.',
       'Хм... не то чтобы я удивлён.',
       `${name}, ты когда-нибудь задумывался — кто тут кого на самом деле контролирует?`,
-      '*листает блокнот* Я записал.',
+      'Я это запомню.',
     ],
     'Королева драмы': [
       `${name}, ты вообще понимаешь через что я прохожу?!`,
       'Всё, я больше не могу делать вид что всё нормально!',
-      `*прижимает руку к сердцу* Нет, ${name}, ты послушай МЕНЯ!`,
+      `Нет, ${name}, ты послушай МЕНЯ!`,
       'Почему никто в этом доме не видит что я чувствую?!',
-      '*всплёскивает руками* Это невыносимо!',
+      'Это невыносимо!',
       `Знаешь что, ${name}? Я устала от этих игр!`,
-      '*на глазах выступают слёзы* Мне так одиноко тут...',
+      'Мне так одиноко тут...',
       'НИКТО в этом доме меня не ценит, вот что я тебе скажу!',
-      `*смотрит в сторону* ${name}, даже не начинай.`,
+      `${name}, даже не начинай.`,
       'Я тут одна нормальная, клянусь!',
     ],
     'Роковая красотка': [
-      `*улыбается* ${name}, ты такой забавный, когда нервничаешь.`,
+      `${name}, ты такой забавный, когда нервничаешь.`,
       'Ну что, будем разговаривать или просто смотреть друг на друга?',
-      `*поправляет волосы* ${name}, мне нравится как ты думаешь.`,
+      `${name}, мне нравится как ты думаешь.`,
       'Я знаю чего хочу. Вопрос — знаешь ли ты?',
-      '*загадочно улыбается* Может быть, может быть...',
+      'Может быть, может быть...',
       `${name}, ты правда думаешь что это сработает?`,
       'Мне тут скучно. Развлеки меня.',
-      '*смотрит из-под ресниц* Как интересно...',
+      'Как интересно...',
       `Знаешь, ${name}, ты не такой как все тут.`,
-      '*пожимает плечами* Посмотрим.',
+      'Посмотрим.',
     ],
     'Правильная': [
       `${name}, давай поговорим нормально, без этого цирка.`,
       'Я считаю, здесь нужны правила, которые все будут соблюдать.',
-      `*серьёзно смотрит* ${name}, это важный вопрос.`,
+      `${name}, это важный вопрос.`,
       'Нельзя просто закрывать глаза на то что тут происходит.',
       'Мне кажется, нам всем стоит быть честнее.',
       `${name}, ты так не считаешь?`,
-      '*поправляет очки* Нет, подожди, я хочу разобраться.',
+      'Нет, подожди, я хочу разобраться.',
       'Есть вещи, которые просто нельзя игнорировать.',
       `Я не против конфликтов, ${name}, но они должны быть конструктивными.`,
-      '*качает головой* Нет, это не нормально.',
+      'Нет, это не нормально.',
     ],
     'Наивная': [
-      `*широко раскрывает глаза* ${name}, а ты серьёзно?!`,
+      `${name}, а ты серьёзно?!`,
       'Ой... я даже не знала что так бывает.',
-      `*теребит рукав* ${name}, а это не опасно?`,
+      `${name}, а это не опасно?`,
       'Мне мама говорила — если не знаешь что сказать, лучше улыбайся.',
-      '*тихонько смеётся* Ну ты даёшь!',
+      'Ну ты даёшь!',
       `${name}, а ты тут давно? Я ещё не привыкла...`,
       'Ой, я, кажется, чего-то не понимаю...',
-      '*краснеет* Ну... наверное, ты прав.',
+      'Ну... наверное, ты прав.',
       `А можно я спрошу глупый вопрос, ${name}?`,
-      '*оглядывается* Тут все такие... взрослые.',
+      'Тут все такие... взрослые.',
     ],
     'Бунтарь': [
-      `*усмехается* ${name}, ты реально в это веришь?`,
+      `${name}, ты реально в это веришь?`,
       'Тут все носят маски, и я единственный кто это видит.',
       `Слушай, ${name}, давай без этих светских бесед, а?`,
-      '*закатывает глаза* Опять эта ваша показуха.',
+      'Опять эта ваша показуха.',
       'Я тут не для того чтобы кому-то нравиться.',
       `${name}, ты тоже играешь или ты настоящий?`,
       'Меня этими штучками не проведёшь.',
-      '*скрещивает руки* Мне вообще плевать что вы думаете.',
+      'Мне вообще плевать что вы думаете.',
       `Знаешь что, ${name}? Я скажу прямо — мне тут не нравится.`,
       'Правда глаза колет, да?',
     ],
     'Философ-тролль': [
-      `*поглаживает бороду* ${name}, а ты задумывался о смысле этого разговора?`,
+      `${name}, а ты задумывался о смысле этого разговора?`,
       'Как говорил один умный человек... впрочем, неважно.',
       `Знаете что, ${name}, в каком-то смысле мы все тут подопытные.`,
-      '*хмыкает* Восхитительно. Абсолютно восхитительно.',
+      'Восхитительно. Абсолютно восхитительно.',
       'Я тут для наблюдений, а вы все — мой эксперимент.',
       `${name}, ты когда-нибудь думал, что реальность — это шоу?`,
-      '*делает пометки в блокноте* Продолжай, это ценный материал.',
+      'Продолжай, это ценный материал.',
       'Ницше бы заплакал, если бы видел эту ситуацию.',
       `А вот скажи мне, ${name}, зачем ты тут? Нет, по-настоящему?`,
-      '*ухмыляется* Вы все такие предсказуемые.',
+      'Вы все такие предсказуемые.',
     ],
   }
 

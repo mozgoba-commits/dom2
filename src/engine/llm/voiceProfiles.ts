@@ -16,6 +16,7 @@ export interface VoiceProfile {
   innerVoice: string
   exampleLines: string[]
   directness: 'прямолинейный' | 'намекает' | 'скрытный'
+  stressResponse?: string
 }
 
 const voiceProfiles: Record<string, VoiceProfile> = {
@@ -40,6 +41,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Э, полегче. Я здесь главный.',
     ],
     directness: 'прямолинейный',
+    stressResponse: 'Под давлением теряет контроль, может показать страх и уязвимость. Крик сменяется растерянностью.',
   },
 
   'Тихий стратег': {
@@ -63,6 +65,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Я просто наблюдаю. Пока.',
     ],
     directness: 'скрытный',
+    stressResponse: 'Маска стратега трескается. Может выдать истинные чувства, становится резким и прямым.',
   },
 
   'Королева драмы': {
@@ -86,6 +89,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Я уже не знаю кому здесь верить!',
     ],
     directness: 'прямолинейный',
+    stressResponse: 'Драма усиливается до предела. Может сказать жестокую правду сквозь слёзы. Истерика становится искренней.',
   },
 
   'Роковая красотка': {
@@ -109,6 +113,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Дорогая, не переживай... Он всё равно смотрит на меня.',
     ],
     directness: 'намекает',
+    stressResponse: 'Гламурная маска слетает. Может показать настоящие эмоции — гнев, обиду, страх одиночества.',
   },
 
   'Правильная': {
@@ -132,6 +137,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Давайте поговорим как цивилизованные люди.',
     ],
     directness: 'прямолинейный',
+    stressResponse: 'Срывается на крик. Может жёстко высказать всё что думает. Праведный гнев без фильтров.',
   },
 
   'Наивная': {
@@ -155,6 +161,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Извините, я, наверное, что-то не так поняла...',
     ],
     directness: 'намекает',
+    stressResponse: 'Замирает, теряется. Может заплакать. Становится ещё тише, ищет укрытие.',
   },
 
   'Бунтарь': {
@@ -178,6 +185,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Знаешь что? Ты нормальная. Это редкость тут.',
     ],
     directness: 'прямолинейный',
+    stressResponse: 'Цинизм сменяется настоящей злостью. Может ударить. Показывает раненого ребёнка внутри.',
   },
 
   'Философ-тролль': {
@@ -201,6 +209,7 @@ const voiceProfiles: Record<string, VoiceProfile> = {
       'Знаете, я записываю. Это будет отличный подкаст.',
     ],
     directness: 'намекает',
+    stressResponse: 'Ирония исчезает. Становится пугающе серьёзным и искренним. Может сказать что-то глубоко личное.',
   },
 }
 

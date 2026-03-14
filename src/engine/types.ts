@@ -54,6 +54,15 @@ export type Mood =
 
 // --- Agent Bio ---
 
+// --- Vulnerability Triggers ---
+
+export interface VulnerabilityTrigger {
+  keywords: string[]
+  emotion: keyof Omit<EmotionalState, 'currentMood'>
+  intensity: number
+  behavioralShift: string
+}
+
 export interface AgentBio {
   name: string
   surname: string
@@ -74,11 +83,22 @@ export interface AgentBio {
   physicalDescription: string
   secretGoal?: string         // Hidden agenda
   vulnerabilities?: string[]  // Emotional weak points
+  alwaysRules?: string[]      // Character ALWAYS does this
+  neverRules?: string[]       // Character NEVER does this
+  vulnerabilityTriggers?: VulnerabilityTrigger[]
+}
+
+// --- Agent Plans ---
+
+export interface AgentPlan {
+  agentId: string
+  day: number
+  goals: string[]
 }
 
 // --- Agent ---
 
-export type LocationId = 'yard' | 'bedroom' | 'living_room' | 'kitchen' | 'confessional'
+export type LocationId = 'yard' | 'bedroom' | 'living_room' | 'kitchen' | 'confessional' | 'bathroom'
 
 export type AgentStatus = 'free' | 'in_conversation' | 'in_event' | 'sleeping' | 'moving'
 
@@ -97,6 +117,8 @@ export interface Agent {
   position: { x: number; y: number }
   isEvicted: boolean
   evictedOnDay: number | null
+  currentPlan?: AgentPlan
+  activeVulnerability?: string  // behavioral shift from triggered vulnerability
 }
 
 // --- Relationships ---
@@ -125,7 +147,7 @@ export interface Memory {
   id: string
   agentId: string
   tick: number
-  type: 'observation' | 'conversation' | 'gossip' | 'event' | 'emotion' | 'decision'
+  type: 'observation' | 'conversation' | 'gossip' | 'event' | 'emotion' | 'decision' | 'reflection'
   content: string
   importance: number        // 0-10
   involvedAgents: string[]
