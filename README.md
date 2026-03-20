@@ -1,36 +1,145 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Big Brother AI — Реалити-шоу с ИИ-участниками
 
-## Getting Started
+Автономная симуляция реалити-шоу «Дом-2», где 8 ИИ-персонажей живут в общем доме, строят отношения, интригуют, ссорятся и влюбляются. Поведение участников генерируется нейросетями (Claude / OpenAI) в реальном времени.
 
-First, run the development server:
+## Быстрый старт
 
 ```bash
+# 1. Установить зависимости
+npm install
+
+# 2. Настроить LLM-провайдер (хотя бы один ключ)
+cp .env.example .env.local
+# Указать ANTHROPIC_API_KEY или OPENAI_API_KEY
+
+# 3. Запустить
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте http://localhost:3000 — лендинг с кастом. Нажмите **«Смотреть шоу»** → `/show`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> Без API-ключа симуляция работает в fallback-режиме: диалоги шаблонные, решения правилоориентированные.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Стек
 
-## Learn More
+| Слой | Технология |
+|------|-----------|
+| Фреймворк | Next.js 16 (App Router, Turbopack) |
+| UI | React 19, Tailwind CSS 4, Zustand 5 |
+| Рендер | Canvas 2D (пиксель-арт, 480×360 × 3) |
+| LLM | Anthropic Claude 3.5 Sonnet / Haiku, OpenAI GPT-4o-mini |
+| Тесты | Vitest |
+| Язык | TypeScript 5 |
 
-To learn more about Next.js, take a look at the following resources:
+## Участники
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| # | Имя | Архетип | Возраст | Город | Секретная цель |
+|---|------|---------|---------|-------|---------------|
+| 1 | Руслан Князев | Альфа-самец | 28 | Краснодар | Сделать Кристину «своей» |
+| 2 | Тимур Шарипов | Тихий стратег | 31 | Казань | Контролировать голосование из тени |
+| 3 | Алёна Воронова | Королева драмы | 24 | Ростов-на-Дону | Уничтожить Кристину как соперницу |
+| 4 | Кристина Лебедева | Роковая красотка | 26 | Москва | Использовать мужчин для победы |
+| 5 | Марина Соколова | Правильная | 29 | Новосибирск | Доказать, что честность побеждает |
+| 6 | Настя Белова | Наивная | 21 | Воронеж | Найти защитника и настоящую любовь |
+| 7 | Дима Козлов | Бунтарь | 25 | Екатеринбург | Доказать, что все остальные — фальшивые |
+| 8 | Олег Петрович | Философ-тролль | 35 | Санкт-Петербург | Собрать материал для подкаста |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+У каждого персонажа — детальная биография, черты Big Five, уязвимости с триггерами, правила поведения (always/never rules) и коронная фраза.
 
-## Deploy on Vercel
+## Игровое время
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Единица | Реальное время | Игровое время |
+|---------|---------------|--------------|
+| 1 тик | 5 секунд | 10 минут |
+| 1 час | 30 секунд | 1 час |
+| 1 день | ~12 минут | 24 часа |
+| 1 эпизод | ~84 минуты | 7 дней |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**Расписание дня:** завтрак (8:00) → свободное время → обед (13:00) → свободное время → ток-шоу (17:00, дни 3 и 5) → ужин (19:00) → конфессионная (23:00) → сон (0:00–8:00). Голосование — на 7-й день эпизода.
+
+## Возможности
+
+### Симуляция
+- **Эмерджентное поведение** — агенты принимают решения на основе личности, эмоций, воспоминаний и отношений
+- **Эмоциональное заражение** — настроение передаётся между агентами в одной комнате
+- **Система памяти** — краткосрочная (50) и долгосрочная (200) память с промоцией важных событий
+- **Сеть сплетен** — слухи искажаются при передаче от агента к агенту
+- **Рефлексия** — агенты периодически анализируют свой опыт и корректируют поведение
+- **Ежедневное планирование** — каждое утро агенты формируют цели на день
+- **Система драмы** — автоматическое усиление конфликтов при низком уровне драмы
+- **Уязвимости** — триггерные слова активируют особые поведенческие режимы
+
+### Управление
+- **Ведущий** — отправка сообщений, задач и твистов через API
+- **Голосование** — зрители голосуют за выселение вместе с агентами
+- **Скорость** — пауза, 1×, 2×, 5× через UI или API
+- **Автосохранение** — каждые ~50 секунд, с атомарной записью и бэкапом
+
+### UI
+- Пиксель-арт канвас с анимированными персонажами и частицами
+- Речевые пузырьки над головами
+- Чат-панель с историей диалогов
+- Карта отношений (граф)
+- Оверлеи: ток-шоу, голосование, выселение, финал, конфессионная
+- Мобильная и десктопная адаптация
+- Скриншоты и шаринг
+
+## API
+
+### SSE-стрим (основной канал)
+```
+GET /api/simulation/stream
+```
+EventSource, отдаёт события: `state_update`, `conversation`, `agent_move`, `drama_alert`, `event_start`, `eviction`, `episode_change`, `finale`, `catch_up`, `vote_update`.
+
+### Агенты
+```
+GET /api/agents              # Список всех агентов
+GET /api/agents/:id          # Детали агента
+```
+
+### Управление
+```
+POST /api/simulation/speed   # { speed: 0|1|2|5 }
+POST /api/host/message       # { message, targetAgentId?, type: "message"|"task"|"twist" }
+POST /api/vote               # { sessionId, visitorId, nomineeId }
+GET  /api/vote               # Текущая сессия голосования
+GET  /api/relationships      # Граф отношений
+```
+
+### Твисты ведущего
+```json
+{ "message": "иммунитет",   "targetAgentId": "...", "type": "twist" }
+{ "message": "секрет ...",   "type": "twist" }
+{ "message": "вернуть всех", "type": "twist" }
+```
+
+## Переменные окружения
+
+```env
+# Хотя бы один ключ обязателен для LLM-режима
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+```
+
+## Скрипты
+
+```bash
+npm run dev       # Запуск в dev-режиме (Turbopack)
+npm run build     # Production-сборка
+npm run start     # Production-сервер
+npm run lint      # ESLint
+npm test          # Vitest
+```
+
+## Сохранения
+
+Симуляция автоматически сохраняется в `data/simulation-save.json`. При перезапуске сервера состояние восстанавливается. Для чистого старта удалите файл сохранения.
+
+## Архитектура
+
+Подробное описание архитектуры — в [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## Лицензия
+
+Приватный проект.

@@ -555,13 +555,16 @@ export class Simulation {
       }
     }
 
-    // 9. Progress active conversations
+    // 9. Progress active conversations (max 2 messages per tick to keep chat readable)
     const activeConvs = this.conversationEngine.getActiveConversations()
+    let convMsgCount = 0
     for (const conv of activeConvs) {
+      if (convMsgCount >= 2) break
       const msg = await this.conversationEngine.progressConversation(
         conv, state.agents, tick, this.memoryStore, this.relationshipGraph, this.useLLM, state.clock
       )
       if (msg) {
+        convMsgCount++
         const speaker = state.agents.find(a => a.id === msg.agentId)
         this.emit({
           type: 'conversation',

@@ -91,19 +91,20 @@ export default function HouseScene() {
     const positionCache = new Map<string, { x: number; y: number }>()
     let bedIdx = 0
     for (const agent of agents) {
-      // Sleeping agents go directly on bed centers (bypass remapping)
-      if (agent.status === 'sleeping' && agent.location === 'bedroom') {
+      const isWalking = ws.isWalking(agent.id)
+      const walkPos = isWalking ? ws.getPosition(agent.id) : null
+
+      if (walkPos) {
+        // Walking takes priority — never snap to bed mid-walk
+        positionCache.set(agent.id, walkPos)
+      } else if (agent.status === 'sleeping' && agent.location === 'bedroom') {
+        // Sleeping and done walking → place on bed
         const bed = BED_CENTERS[bedIdx % BED_CENTERS.length]
         bedIdx++
         positionCache.set(agent.id, bed)
       } else {
-        const walkPos = ws.getPosition(agent.id)
-        if (walkPos) {
-          positionCache.set(agent.id, walkPos)
-        } else {
-          const remapped = remapPosition(agent.location, agent.position)
-          positionCache.set(agent.id, clampToWalkable(agent.location, remapped.x, remapped.y))
-        }
+        const remapped = remapPosition(agent.location, agent.position)
+        positionCache.set(agent.id, clampToWalkable(agent.location, remapped.x, remapped.y))
       }
     }
 

@@ -171,7 +171,10 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           const existing = animStore.animations.get(agent.id)
 
           if (agent.status === 'sleeping') {
-            animStore.setAnimationState(agent.id, 'sleeping')
+            // Only show sleeping animation once agent has finished walking to bed
+            if (!useWalkingStore.getState().isWalking(agent.id)) {
+              animStore.setAnimationState(agent.id, 'sleeping')
+            }
           } else if (agent.status === 'in_conversation') {
             // Only set talking if not already in a more specific anim (arguing, flirting, etc.)
             if (!existing || existing.state === 'idle' || existing.state === 'walking') {

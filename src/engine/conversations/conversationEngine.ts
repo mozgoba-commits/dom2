@@ -12,7 +12,7 @@ import { nanoid } from 'nanoid'
 
 const MAX_CONVERSATION_TURNS = 8
 const MAX_ACTIVE_CONVERSATIONS = 10
-const MIN_TICKS_BETWEEN_MESSAGES = 2 // minimum 2 ticks (~20 game min) between messages in same conversation
+const MIN_TICKS_BETWEEN_MESSAGES = 3 // minimum 3 ticks (~30 game min) between messages in same conversation
 const MAX_MESSAGE_LENGTH = 200 // characters
 
 // Keywords that increase tension

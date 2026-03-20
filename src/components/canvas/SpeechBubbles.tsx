@@ -18,7 +18,8 @@ interface VisibleBubble {
 }
 
 const MAX_BUBBLES = 3
-const BUBBLE_TTL = 4500 // ms
+const BUBBLE_TTL = 7000 // ms
+const MAX_CONTENT_LENGTH = 140
 
 export default function SpeechBubbles() {
   const agents = useSimulationStore(s => s.agents)
@@ -43,7 +44,7 @@ export default function SpeechBubbles() {
     const newBubble: VisibleBubble = {
       messageId: latest.id,
       agentName: latest.speakerName,
-      content: latest.content.length > 60 ? latest.content.slice(0, 57) + '...' : latest.content,
+      content: latest.content.length > MAX_CONTENT_LENGTH ? latest.content.slice(0, MAX_CONTENT_LENGTH - 3) + '...' : latest.content,
       accentColor: getAccentColor(latest.speakerName),
       // Position at head level: cy is feet, head is ~24px above in native coords
       position: { x: pos.x * SCALE, y: (pos.y - 28) * SCALE },
@@ -114,7 +115,7 @@ export default function SpeechBubbles() {
             style={{
               background: 'white',
               borderLeft: `3px solid ${bubble.accentColor}`,
-              maxWidth: 180,
+              maxWidth: 260,
             }}
           >
             <div

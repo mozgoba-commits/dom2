@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { Simulation } from './simulation'
 
 describe('Simulation', () => {
-  it('creates simulation with 3 agents', () => {
+  it('creates simulation with 8 agents', () => {
     const sim = new Simulation(false)
-    expect(sim.state.agents.length).toBe(3)
+    expect(sim.state.agents.length).toBe(8)
   })
 
   it('creates simulation with clock at day 1', () => {
@@ -76,12 +76,12 @@ describe('Simulation', () => {
     const save = sim.saveState()
 
     expect(save.version).toBe(1)
-    expect(save.state.agents.length).toBe(3)
+    expect(save.state.agents.length).toBe(8)
     expect(save.subsystems.relationships).toBeDefined()
     expect(save.subsystems.shortTermMemories).toBeDefined()
 
     const sim2 = Simulation.fromSaveFile(save, false)
-    expect(sim2.state.agents.length).toBe(3)
+    expect(sim2.state.agents.length).toBe(8)
     expect(sim2.state.clock.day).toBe(sim.state.clock.day)
   })
 
@@ -107,7 +107,7 @@ describe('Simulation', () => {
   it('generates catch-up data', () => {
     const sim = new Simulation(false)
     const data = sim.getCatchUpData()
-    expect(data.activeAgentCount).toBe(3)
+    expect(data.activeAgentCount).toBe(8)
     expect(data.evictions).toHaveLength(0)
     expect(data.clock).toBeDefined()
   })
